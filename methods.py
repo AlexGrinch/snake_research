@@ -56,7 +56,7 @@ class QNetwork:
                                                kernel_size=kernel_size,
                                                stride=stride,
                                                padding='VALID',
-                                               activation_fn=tf.nn.relu)
+                                               activation_fn=tf.nn.elu)
             out = layers.flatten(out)
 
             # fully connected part of the network
@@ -64,7 +64,7 @@ class QNetwork:
                 for num_outputs in fully_connected:
                     out = layers.fully_connected(out,
                                                  num_outputs=num_outputs,
-                                                 activation_fn=tf.nn.relu,
+                                                 activation_fn=tf.nn.elu,
                                                  weights_initializer=xavier)
                     
             # q-values estimation        
@@ -117,7 +117,7 @@ class DistQNetwork:
                  optimizer=tf.train.AdamOptimizer(2.5e-4, epsilon=0.01/32),
                  scope="distributional_q_network", reuse=False):
         
-        """Class for neural network which estimates Q-function
+        """Class for neural network which estimates Q-function distribution
         
         Parameters
         ----------
@@ -276,7 +276,7 @@ class PGNetwork:
                  optimizer=tf.train.AdamOptimizer(2.5e-4),
                  scope="q_network", reuse=False):
         
-        """Class for neural network which estimates Q-function
+        """Class for neural network which estimates policy
         
         Parameters
         ----------
@@ -368,7 +368,125 @@ class PGNetwork:
         sess.run(self.update_model, feed_dict)  
         return sess.run(self.loss, feed_dict)
         
+####################################################################################################
+##################################### Policy Gradient Network ######################################
+####################################################################################################
 
+class ActorCriticNetwork:
+    
+    def __init__(self, num_actions, state_shape=[8, 8, 1],
+                 convs=[[32, 4, 2], [64, 2, 1]], 
+                 fully_connected=[128],
+                 optimizer=tf.train.AdamOptimizer(2.5e-4),
+                 scope="q_network", reuse=False):
+        
+        """Class for neural network which estimates policy and value function
+        
+        Parameters
+        ----------
+        num_actions: int
+            number of actions the agent can take
+        state_shape: list
+            list of 3 parameters [frame_w, frame_h, num_frames]
+            frame_w: frame width
+            frame_h: frame height
+            num_frames: number of successive frames considered as a state
+        conv: list
+            list of convolutional layers' parameters, each element
+            has the form -- [num_outputs, kernel_size, stride]
+        fully_connected: list
+            list of fully connected layers' parameters, each element
+            has the form -- num_outputs
+        optimizer: tf.train optimizer
+            optimization algorithm for stochastic gradient descend
+        scope: str
+            unique name of a specific network
+        """
+        
+        xavier = layers.xavier_initializer()
+        
+        ###################### Neural network architecture ######################
+        
+        input_shape = [None] + state_shape
+        self.input_states = tf.placeholder(dtype=tf.float32, shape=input_shape)
+        
+        with tf.variable_scope(scope, reuse=reuse):
+            # convolutional part of the network
+            out = self.input_states
+            with tf.variable_scope("conv"):
+                for num_outputs, kernel_size, stride in convs:
+                    out = layers.convolution2d(out,
+                                               num_outputs=num_outputs,
+                                               kernel_size=kernel_size,
+                                               stride=stride,
+                                               padding='VALID',
+                                               activation_fn=tf.nn.relu)
+            out = layers.flatten(out)
+
+            # fully connected part of the network
+            with tf.variable_scope("fc"):
+                for num_outputs in fully_connected:
+                    out = layers.fully_connected(out,
+                                                 num_outputs=num_outputs,
+                                                 activation_fn=tf.nn.relu,
+                                                 weights_initializer=xavier)
+                    
+            # q-values estimation        
+            with tf.variable_scope("policy"):
+                self.probs = layers.fully_connected(out,
+                                                    num_outputs=num_actions,
+                                                    activation_fn=tf.nn.softmax,
+                                                    weights_initializer=xavier)
+                self.values = layers.fully_connected(out,
+                                                     num_outputs=1,
+                                                     activation_fn=None,
+                                                     weights_initializer=xavier)
+                                                               
+        ######################### Optimization procedure ########################
+        
+        # one-hot encode actions to get q-values for state-action pairs
+        self.input_actions = tf.placeholder(dtype=tf.int32, shape=[None])
+        actions_onehot = tf.one_hot(self.input_actions, num_actions, dtype=tf.float32)
+        probs_selected = tf.reduce_sum(tf.multiply(self.probs, actions_onehot), axis=1)
+        
+        # choose best actions (according to q-values)
+        self.p_argmax = tf.argmax(self.probs, axis=1)
+        
+        self.pg_targets = tf.placeholder(dtype=tf.float32, shape=[None, 1])
+        self.pg_loss = -tf.reduce_sum(self.pg_targets * tf.log(probs_selected))
+        
+        self.value_targets = tf.placeholder(dtype=tf.float32, shape=[None, 1])
+        self.value_loss = tf.losses.huber_loss(self.value_targets, self.values)
+        
+        # create loss function and update rule
+        self.loss = self.pg_loss + self.value_loss
+        self.update_model = optimizer.minimize(self.loss)
+        
+    def get_p_argmax(self, sess, states):
+        feed_dict = {self.input_states:states}
+        p_argmax = sess.run(self.p_argmax, feed_dict)
+        return p_argmax
+
+    def get_probs(self, sess, states):
+        feed_dict = {self.input_states:states}
+        probs = sess.run(self.probs, feed_dict)
+        return probs
+    
+    def get_values(self, sess, states):
+        feed_dict = {self.input_states:states}
+        values = sess.run(self.values, feed_dict)
+        return values
+
+    def update(self, sess, states, actions, pg_targets, value_targets):
+        
+        feed_dict = {self.input_states:states,
+                     self.input_actions:actions,
+                     self.pg_targets:pg_targets,
+                     self.value_targets:value_targets}
+        sess.run(self.update_model, feed_dict)  
+        return sess.run([self.pg_loss, self.value_loss], feed_dict)
+        
+        
 ####################################################################################################
 ######################################## Experience Replay #########################################
 ####################################################################################################        
