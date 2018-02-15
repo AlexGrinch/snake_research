@@ -216,7 +216,7 @@ class DistQNetwork:
         
         # create loss function and update rule
         self.targets = tf.placeholder(dtype=tf.float32, shape=[None, self.num_atoms])
-        self.loss = -tf.reduce_sum(self.targets * tf.log(self.probs_selected))
+        self.loss = -tf.reduce_sum(self.targets * tf.log(self.probs_selected + 1e-6))
         self.update_model = optimizer.minimize(self.loss)
     
     def get_probs(self, sess, states):
