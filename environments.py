@@ -28,12 +28,34 @@ class Snake:
         """
         
         self.state = np.zeros((self.height, self.width))
+        
+        
+        
+        
         x_tail = np.random.randint(self.height)
-        y_tail = np.random.randint(self.width-3)
-        self.state[x_tail, y_tail:y_tail+3] = 1
+        y_tail = np.random.randint(self.width)
+        
+        xs = [x_tail, ]
+        ys = [y_tail, ]
+        
+        for i in range(2):
+            nbrs = self.get_neighbors(xs[-1], ys[-1])
+            while 1:
+                idx = np.random.randint(0, len(nbrs))
+                x0 = nbrs[idx][0]
+                y0 = nbrs[idx][1]
+                occupied = [list(pt) for pt in zip(xs, ys)]
+                if not [x0, y0] in occupied:
+                    xs.append(x0)
+                    ys.append(y0)
+                    break
+        
+        for x_t, y_t in list(zip(xs, ys)):
+            self.state[x_t, y_t] = 1
+     
         self.generate_food()
-        self.x = [x_tail for i in range(3)]
-        self.y = [(y_tail+i) for i in range(3)]
+        self.x = xs
+        self.y = ys
         return self.get_state()
     
     def step(self, a):
@@ -110,3 +132,15 @@ class Snake:
     def plot_state(self):
         img = self.get_state()[:,:,0]
         plt.imshow(img, vmin=0, vmax=4, interpolation='nearest')
+        
+    def get_neighbors(self, i, j):
+        """
+        Get all the neighbors of the point (i, j)
+        (excluding (i, j))
+        """
+        h = self.height
+        w = self.width
+        nbrs = [[i + k, j + m] for k in [-1, 0, 1] for m in [-1, 0, 1]
+                if i + k >=0 and i + k < h and j + m >= 0 and j + m < w
+                and not (k == m) and not (k == -m)]
+        return nbrs
