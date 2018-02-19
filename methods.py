@@ -495,9 +495,9 @@ class ActorCriticNetwork:
 class ReflexDistQNetwork:
 
     def __init__(self, num_actions, state_shape=[8, 8, 1],
-                 convs=[[32, 4, 2], [64, 2, 1]],
-                 fully_connected=[128], num_atoms=21, v=(-10, 10),
-                 reflex=4, lstm_units=128, optimizer=tf.train.AdamOptimizer(2.5e-4, epsilon=0.01/32),
+                 convs=[[32, 2, 2], [64, 2, 1]],
+                 fully_connected=[64], num_atoms=21, v=(-10, 10),
+                 reflex=4, lstm_units=64, optimizer=tf.train.AdamOptimizer(2.5e-4, epsilon=0.01/32),
                  scope="reflex_distributional_q_network", reuse=False):
 
         """Class for neural network which estimates Q-function distribution
@@ -557,6 +557,21 @@ class ReflexDistQNetwork:
                                                  activation_fn=tf.nn.relu,
                                                  weights_initializer=xavier)
 
+            # reflex head
+            self.lstm_units = lstm_units
+            self.reflex = reflex
+            with tf.variable_scope("reflex"):
+                frames = self.reflex * [out]
+                lstm_layer = rnn.BasicLSTMCell(self.lstm_units, forget_bias=1)
+                outputs, _ = rnn.static_rnn(lstm_layer, frames, dtype="float32")
+                num_outputs = fully_connected[-1]
+                out_final = layers.fully_connected(outputs[-1],
+                                                   num_outputs=num_outputs,
+                                                   activation_fn=tf.nn.relu,
+                                                   weights_initializer=xavier)
+
+            out_with_advice = tf.concat([out, out_final], axis=1)
+
             # distribution parameters
             self.num_atoms = num_atoms
             self.v_min, self.v_max = v
@@ -567,28 +582,12 @@ class ReflexDistQNetwork:
             with tf.variable_scope("probs"):
                 action_probs = []
                 for a in range(num_actions):
-                    action_prob = layers.fully_connected(out,
+                    action_prob = layers.fully_connected(out_with_advice,
                                                          num_outputs=self.num_atoms,
                                                          activation_fn=tf.nn.softmax,
                                                          weights_initializer=xavier)
                     action_probs.append(action_prob)
                 self.probs = tf.stack(action_probs, axis=1)
-
-            # reflex head
-            self.lstm_units = lstm_units
-            self.reflex = reflex
-            with tf.variable_scope("reflex"):
-                frames = self.reflex * [out]
-                lstm_layer = rnn.BasicLSTMCell(self.lstm_units, forget_bias=1)
-                outputs, _ = rnn.static_rnn(lstm_layer, frames, dtype="float32")
-                out_weights = tf.get_variable('lstm_w', shape=(self.lstm_units, num_actions), initializer=xavier)
-                out_bias = tf.get_variable('lstm_b', shape=(num_actions, ), initializer=tf.constant_initializer(0.01))
-                action_preds = []
-                for o in outputs:
-                    action_preds.append(tf.matmul(o, out_weights) + out_bias)
-
-            self.action_preds = action_preds
-            self.action_seq = tf.argmax(tf.stack(action_preds, axis=1), axis=2)
 
 
             # q-values estimation
