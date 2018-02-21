@@ -102,9 +102,11 @@ class Snake:
         # snake elongates after eating a food
         if self.state[x_, y_] == 3:
             self.state[x_, y_] = 1
-            self.generate_food()
-            return self.get_state(), 1, False
-        
+            if self.generate_food():
+                return self.get_state(), 1, False
+            else:
+                return self.get_state(), 1, True
+
         # snake moves forward if cell ahead is empty
         if self.state[x_, y_] == 0:
             self.state[x_, y_] = 1
@@ -120,8 +122,12 @@ class Snake:
         
     def generate_food(self):
         free = np.where(self.state == 0)
-        idx = np.random.randint(free[0].size)
-        self.state[free[0][idx], free[1][idx]] = 3
+        if free[0].size == 0:
+            return False
+        else:
+            idx = np.random.randint(free[0].size)
+            self.state[free[0][idx], free[1][idx]] = 3
+            return True
         
     def next_cell(self, i, j, a):
         if a == 0: return i-1, j
