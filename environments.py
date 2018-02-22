@@ -16,6 +16,7 @@ class Snake:
         self.height, self.width = grid_size
         self.state = np.zeros(grid_size)
         self.x, self.y = [], []
+        self.dir = None
         
     def reset(self):
         """
@@ -56,6 +57,7 @@ class Snake:
         self.generate_food()
         self.x = xs
         self.y = ys
+
         return self.get_state()
     
     def step(self, a):
@@ -80,13 +82,8 @@ class Snake:
             calls will return undefined results
         """
         
+        self.update_dir()
         x_, y_ = self.next_cell(self.x[-1], self.y[-1], a)
-        
-        # snake continues moving in current direction if the
-        # action forces it to turn head by 180 degrees
-        if (x_, y_) == (self.x[-2], self.y[-2]):
-            x_ = 2 * self.x[-1] - self.x[-2]
-            y_ = 2 * self.y[-1] - self.y[-2]
 
         # snake dies if hitting the walls
         if x_ < 0 or x_ == self.height or y_ < 0 or y_ == self.width:
@@ -130,10 +127,12 @@ class Snake:
             return True
         
     def next_cell(self, i, j, a):
-        if a == 0: return i-1, j
-        if a == 1: return i, j-1
-        if a == 2: return i+1, j
-        if a == 3: return i, j+1 
+        if a == 0: 
+            return i+self.dir[0], j+self.dir[1]
+        if a == 1: 
+            return i-self.dir[1], j+self.dir[0]
+        if a == 2: 
+            return i+self.dir[1], j-self.dir[0]
         
     def plot_state(self):
         img = self.get_state()[:,:,0]
@@ -150,3 +149,8 @@ class Snake:
                 if i + k >=0 and i + k < h and j + m >= 0 and j + m < w
                 and not (k == m) and not (k == -m)]
         return nbrs
+    
+    def update_dir(self):
+        x_dir = self.x[-1] - self.x[-2]
+        y_dir = self.y[-1] - self.y[-2]
+        self.dir = (x_dir, y_dir)
