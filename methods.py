@@ -66,6 +66,7 @@ class QNetwork:
                                                  num_outputs=num_outputs,
                                                  activation_fn=tf.nn.elu,
                                                  weights_initializer=xavier)
+                    self.out = out
 
             # q-values estimation
             with tf.variable_scope("q_values"):
@@ -87,6 +88,11 @@ class QNetwork:
         self.td_error = tf.losses.huber_loss(self.targets, q_values_selected)
         self.loss = tf.reduce_sum(self.td_error)
         self.update_model = optimizer.minimize(self.loss)
+        
+    def get_features(self, sess, states):
+        feed_dict = {self.input_states:states}
+        features = sess.run(self.out, feed_dict)
+        return features
 
     def get_q_argmax(self, sess, states):
         feed_dict = {self.input_states:states}
