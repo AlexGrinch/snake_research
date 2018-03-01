@@ -17,6 +17,7 @@ class Snake:
         self.state = np.zeros(grid_size)
         self.x, self.y = [], []
         self.dir = None
+        self.opt_tab = self.opt_table(grid_size)
         
     def reset(self):
         """
@@ -29,10 +30,7 @@ class Snake:
         """
         
         self.state = np.zeros((self.height, self.width))
-        
-        
-        
-        
+
         x_tail = np.random.randint(self.height)
         y_tail = np.random.randint(self.width)
         
@@ -57,6 +55,7 @@ class Snake:
         self.generate_food()
         self.x = xs
         self.y = ys
+        self.update_dir()
 
         return self.get_state()
     
@@ -154,3 +153,31 @@ class Snake:
         x_dir = self.x[-1] - self.x[-2]
         y_dir = self.y[-1] - self.y[-2]
         self.dir = (x_dir, y_dir)
+        
+    ########################## Optimal action selection ##########################
+    
+    def opt_table(self, grid_size):
+        n = grid_size[0]
+        t = np.zeros(grid_size, dtype=np.int)
+        t[0] = np.arange(n)
+        for i in range(n//2):
+            t[1:,(n-1)-2*i] = np.arange(n-1) + n+2*i*(n-1)
+            t[1:,(n-2)-2*i][::-1] = np.arange(n-1) + 2*n-1+2*i*(n-1)
+        return t
+    
+    def opt_action(self):
+        x, y = self.x[-1], self.y[-1]
+        self.update_dir()
+        n = self.height
+        mod = n ** 2
+        tab_xy = self.opt_tab[x, y]
+        pos_a = -1
+        for a in range(3):
+            x_, y_ = self.next_cell(x, y, a)
+            if (x_<n and y_<n and x_>=0 and y_>=0):
+                tab_xy_ = self.opt_tab[x_, y_]
+                if ((tab_xy+1) % mod == tab_xy_):
+                    return a
+                if ((tab_xy-1) % mod == tab_xy_):
+                    pos_a = a
+        return pos_a
