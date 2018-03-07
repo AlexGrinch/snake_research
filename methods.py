@@ -694,7 +694,16 @@ class ReplayMemory:
             self.memory.append(None)
         self.memory[self.position] = [*args]
         self.position = (self.position + 1) % self.capacity
+        
+    def push_episode(self, episode_list):
+        
+        self.memory += episode_list
+        
+        gap = len(self.memory) - self.capacity
+        if gap > 0:
+            self.memory[:gap] = []
 
+        
     def get_batch(self, batch_size):
         batch = random.sample(self.memory, batch_size)
         batch = np.reshape(batch, [batch_size, 5])

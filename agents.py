@@ -19,7 +19,7 @@ from methods import QNetwork, ReplayMemory
 
 class SnakeDQNAgent:
     
-    def __init__(self, grid_size=[4, 4], convs=[[16, 2, 1], [32, 1, 1]], 
+    def __init__(self, state_shape=[4, 4, 1], convs=[[16, 2, 1], [32, 1, 1]], 
                  fully_connected=[128], model_name="baseline_agent"):
         
         """Class for training and evaluating DQN agent on Atari games
@@ -36,7 +36,7 @@ class SnakeDQNAgent:
         
         ############################ Game environment ############################
         
-        self.train_env = Snake(grid_size=grid_size)
+        self.train_env = Snake(grid_size=state_shape[:-1])
         self.num_actions = 3
             
         self.path = "snake_models" + "/" + model_name
@@ -46,10 +46,10 @@ class SnakeDQNAgent:
         ############################# Agent & Target #############################
         
         tf.reset_default_graph()
-        self.agent_net = QNetwork(self.num_actions, state_shape=grid_size+[1], 
+        self.agent_net = QNetwork(self.num_actions, state_shape=state_shape, 
                                   convs=convs, fully_connected=fully_connected, 
                                   scope="agent")
-        self.target_net = QNetwork(self.num_actions, state_shape=grid_size+[1],
+        self.target_net = QNetwork(self.num_actions, state_shape=state_shape,
                                    convs=convs, fully_connected=fully_connected,
                                    scope="target")
         
@@ -129,6 +129,8 @@ class SnakeDQNAgent:
                 num_epochs = from_epoch
     
             episode_count = 0
+            ep_lifetimes = []
+        
             
             while num_epochs < max_num_epochs:
                 
@@ -184,7 +186,8 @@ class SnakeDQNAgent:
                         num_epochs += 1
                         try:
                             self.saver.save(sess, self.path+"/model", global_step=num_epochs)
-                            np.savez(self.path+"/learning_curve.npz", r=train_rewards, f=frame_counts)
+                            np.savez(self.path+"/learning_curve.npz", r=train_rewards, 
+                                     f=frame_counts, l=ep_lifetimes)
                         except: pass
                     
                     # if game is over, reset the environment
@@ -193,11 +196,17 @@ class SnakeDQNAgent:
                 episode_count += 1
                 train_rewards.append(train_ep_reward)
                 frame_counts.append(frame_count)
+                ep_lifetimes.append(time_step+1)
                 
                 # print performance once in a while
                 if episode_count % performance_print_freq == 0:
                     avg_reward = np.mean(train_rewards[-performance_print_freq:])
-                    print("Train info:", frame_count, avg_reward, self.eps)  
+                    avg_lifetime = np.mean(ep_lifetimes[-performance_print_freq:])
+                    print("frame count:", frame_count)
+                    print("average reward:", avg_reward)
+                    print("epsilon:", round(self.eps, 3))
+                    print("average lifetime:", avg_lifetime) 
+                    print("-------------------------------")
 
     def update_target_graph(self, tau):
         op_holder = []
@@ -238,3 +247,42 @@ class SnakeDQNAgent:
                 
                 if done: break
         return R
+    
+    def test_agent(self,
+                   gpu_id=0,
+                   num_episodes=10,
+                   max_episode_length=2000,
+                   from_epoch=0):
+        
+        if (gpu_id == -1):
+            config = tf.ConfigProto()
+        else:
+            os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+            config = tf.ConfigProto()
+            config.gpu_options.allow_growth = True        
+            
+        with tf.Session(config=config) as sess:
+            self.saver.restore(sess, self.path+"/model-"+str(from_epoch))
+            rewards = []
+            bellman_errors = []
+            for episode_count in range(num_episodes):
+                s = self.train_env.reset()
+                R = 0
+                BE = 0
+                for time_step in range(max_episode_length):
+                    a = self.agent_net.get_q_argmax(sess, [s])[0]
+                    q = self.agent_net.get_q_values(sess, [s])[0][a]
+                    
+                    s, r, done = self.train_env.step(a)
+                    a_ = self.agent_net.get_q_argmax(sess, [s])[0]
+                    q_ = self.agent_net.get_q_values(sess, [s])[0][a_]
+                    
+                    BE += np.abs(q - (r + q_))
+                    R += r
+                    if done: break
+                rewards.append(R)
+                bellman_errors.append(BE/(time_step+1))
+                
+        return rewards, bellman_errors
+        

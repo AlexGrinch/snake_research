@@ -17,6 +17,7 @@ class Snake:
         self.state = np.zeros(grid_size)
         self.x, self.y = [], []
         self.dir = None
+        self.food = None
         self.opt_tab = self.opt_table(grid_size)
         
     def reset(self):
@@ -98,10 +99,7 @@ class Snake:
         # snake elongates after eating a food
         if self.state[x_, y_] == 3:
             self.state[x_, y_] = 1
-            if self.generate_food():
-                return self.get_state(), 1, False
-            else:
-                return self.get_state(), 1, True
+            return self.get_state(), 1, self.generate_food()
 
         # snake moves forward if cell ahead is empty
         if self.state[x_, y_] == 0:
@@ -112,18 +110,21 @@ class Snake:
             return self.get_state(), 0, False  
         
     def get_state(self):
-        state = self.state.copy()
-        state[self.x[-1], self.y[-1]] = 2
-        return state.reshape((self.height, self.width, 1))
+        state = np.zeros((self.height, self.width, 3))
+        state[self.x[:-1], self.y[:-1], 0] = 1
+        state[self.x[-1], self.y[-1], 1] = 1
+        state[self.food[0], self.food[1], 2] = 1
+        return state
         
     def generate_food(self):
         free = np.where(self.state == 0)
         if free[0].size == 0:
-            return False
+            return True
         else:
             idx = np.random.randint(free[0].size)
-            self.state[free[0][idx], free[1][idx]] = 3
-            return True
+            self.food = free[0][idx], free[1][idx]
+            self.state[self.food] = 3
+            return False
         
     def next_cell(self, i, j, a):
         if a == 0: 
@@ -134,7 +135,8 @@ class Snake:
             return i+self.dir[1], j-self.dir[0]
         
     def plot_state(self):
-        img = self.get_state()[:,:,0]
+        state = self.get_state()
+        img = sum([state[:,:,i]*(i+1) for i in range(3)])
         plt.imshow(img, vmin=0, vmax=4, interpolation='nearest')
         
     def get_neighbors(self, i, j):
