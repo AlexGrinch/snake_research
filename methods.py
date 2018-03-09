@@ -56,7 +56,7 @@ class QNetwork:
                                                kernel_size=kernel_size,
                                                stride=stride,
                                                padding='VALID',
-                                               activation_fn=tf.nn.elu)
+                                               activation_fn=tf.nn.relu)
             out = layers.flatten(out)
 
             # fully connected part of the network
@@ -64,7 +64,7 @@ class QNetwork:
                 for num_outputs in fully_connected:
                     out = layers.fully_connected(out,
                                                  num_outputs=num_outputs,
-                                                 activation_fn=tf.nn.elu,
+                                                 activation_fn=tf.nn.relu,
                                                  weights_initializer=xavier)
                     self.out = out
 

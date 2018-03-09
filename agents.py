@@ -15,12 +15,13 @@ from IPython import display
 import matplotlib.pyplot as plt
 
 from environments import Snake
-from methods import QNetwork, ReplayMemory
+from methods import QNetwork, DistQNetwork, ReplayMemory
 
-class SnakeDQNAgent:
+############################## Snake agent template ##############################
+
+class SnakeAgent:
     
-    def __init__(self, state_shape=[4, 4, 1], convs=[[16, 2, 1], [32, 1, 1]], 
-                 fully_connected=[128], model_name="baseline_agent"):
+    def __init__(self, state_shape=[4, 4, 1], model_name="baseline_agent"):
         
         """Class for training and evaluating DQN agent on Atari games
         
@@ -42,16 +43,8 @@ class SnakeDQNAgent:
         self.path = "snake_models" + "/" + model_name
         if not os.path.exists(self.path):
             os.makedirs(self.path)
-        
-        ############################# Agent & Target #############################
-        
-        tf.reset_default_graph()
-        self.agent_net = QNetwork(self.num_actions, state_shape=state_shape, 
-                                  convs=convs, fully_connected=fully_connected, 
-                                  scope="agent")
-        self.target_net = QNetwork(self.num_actions, state_shape=state_shape,
-                                   convs=convs, fully_connected=fully_connected,
-                                   scope="target")
+            
+    def init_weights(self):
         
         self.init = tf.global_variables_initializer()
         self.saver = tf.train.Saver()
@@ -111,6 +104,7 @@ class SnakeDQNAgent:
             config.gpu_options.allow_growth = True
             
         target_ops = self.update_target_graph(tau)
+        self.batch_size = batch_size
         
         with tf.Session(config=config) as sess:
             
@@ -150,7 +144,7 @@ class SnakeDQNAgent:
                     s_, r, end = self.train_env.step(a)
                     
                     # save transition into experience replay
-                    self.rep_buffer.push(s, a, np.sign(r), s_, end)
+                    self.rep_buffer.push(s, a, r, s_, end)
                     
                     # update current state and statistics
                     s = s_
@@ -165,15 +159,7 @@ class SnakeDQNAgent:
                     if frame_count % agent_update_freq == 0:
                         
                         batch = self.rep_buffer.get_batch(batch_size)
-                        
-                        # estimate the right hand side of Bellman equation
-                        max_actions = self.agent_net.get_q_argmax(sess, batch.s_)
-                        q_values = self.target_net.get_q_values(sess, batch.s_)
-                        double_q = q_values[np.arange(batch_size), max_actions]
-                        targets = batch.r + (self.gamma * double_q * batch.end)
-                        
-                        # update agent network
-                        self.agent_net.update(sess, batch.s, batch.a, targets)
+                        self.update_agent_weights(sess, batch)
                         
                         # update target network
                         if tau == 1:
@@ -207,6 +193,9 @@ class SnakeDQNAgent:
                     print("epsilon:", round(self.eps, 3))
                     print("average lifetime:", avg_lifetime) 
                     print("-------------------------------")
+                    
+    def update_agent_weights(self, sess, batch):
+        pass
 
     def update_target_graph(self, tau):
         op_holder = []
@@ -285,4 +274,72 @@ class SnakeDQNAgent:
                 bellman_errors.append(BE/(time_step+1))
                 
         return rewards, bellman_errors
+    
+############################## Deep Q-Network agent ##############################
+
+class SnakeDQNAgent(SnakeAgent):
+    
+    def __init__(self, state_shape=[4, 4, 3], 
+                 convs=[[16, 2, 1], [32, 1, 1]], 
+                 fully_connected=[128],
+                 optimizer=tf.train.AdamOptimizer(2.5e-4),
+                 model_name="DQN"):
         
+        super(SnakeDQNAgent, self).__init__(model_name=model_name)
+        
+        tf.reset_default_graph()
+        self.agent_net = QNetwork(self.num_actions, state_shape=state_shape,
+                                  convs=convs, fully_connected=fully_connected, 
+                                  optimizer=optimizer, scope="agent")
+        self.target_net = QNetwork(self.num_actions, state_shape=state_shape,
+                                   convs=convs, fully_connected=fully_connected, 
+                                   optimizer=optimizer, scope="target")
+        self.init_weights()
+        
+        
+    def update_agent_weights(self, sess, batch):
+        
+        # estimate the right hand side of Bellman equation
+        max_actions = self.agent_net.get_q_argmax(sess, batch.s_)
+        q_values = self.target_net.get_q_values(sess, batch.s_)
+        double_q = q_values[np.arange(self.batch_size), max_actions]
+        targets = batch.r + (self.gamma * double_q * batch.end)
+
+        # update agent network
+        self.agent_net.update(sess, batch.s, batch.a, targets)
+
+############################## Distributional agent ##############################
+
+class SnakeDistDQNAgent(SnakeAgent):
+    
+    def __init__(self, state_shape=[4, 4, 3],
+                 convs=[[16, 2, 1], [32, 1, 1]], 
+                 fully_connected=[128],
+                 num_atoms=21,
+                 v=(-10, 10),
+                 optimizer=tf.train.AdamOptimizer(2.5e-4, epsilon=0.01/32),
+                 model_name="DistDQN"):
+
+        super(SnakeDistDQNAgent, self).__init__(model_name=model_name)
+
+        tf.reset_default_graph()
+        self.agent_net = DistQNetwork(self.num_actions, state_shape=state_shape,
+                                      convs=convs, fully_connected=fully_connected,
+                                      num_atoms=num_atoms, v=v,
+                                      optimizer=optimizer, scope="agent")
+        self.target_net = DistQNetwork(self.num_actions, state_shape=state_shape,
+                                       convs=convs, fully_connected=fully_connected,
+                                       num_atoms=num_atoms, v=v,
+                                       optimizer=optimizer, scope="target")
+        self.init_weights()
+
+    def update_agent_weights(self, sess, batch):
+
+        # estimate the projection of the right hand side of Bellman equation
+        max_actions = self.agent_net.get_q_argmax(sess, batch.s_)
+        target_m = self.target_net.cat_proj(sess, batch.r, batch.s_,
+                                            max_actions, batch.end,
+                                            gamma=self.gamma)
+
+        # update agent network
+        self.agent_net.update(sess, batch.s, batch.a, target_m)
