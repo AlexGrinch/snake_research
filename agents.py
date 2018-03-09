@@ -5,6 +5,7 @@ import numpy as np
 
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
+import t3f
 
 import gym
 from gym import spaces
@@ -15,7 +16,7 @@ from IPython import display
 import matplotlib.pyplot as plt
 
 from environments import Snake
-from methods import QNetwork, DistQNetwork, ReplayMemory
+from methods import QNetwork, DistQNetwork, ReplayMemory, QQTTTable
 
 ############################## Snake agent template ##############################
 
@@ -343,3 +344,35 @@ class SnakeDistDQNAgent(SnakeAgent):
 
         # update agent network
         self.agent_net.update(sess, batch.s, batch.a, target_m)
+        
+#################################### QTT agent ###################################
+
+class SnakeQQTTAgent(SnakeAgent):
+    
+    def __init__(self, state_shape=[4, 4, 3],
+                 num_colors=2, 
+                 tt_rank=8,
+                 optimizer=tf.train.AdamOptimizer(2.5e-4, epsilon=0.01/32),
+                 model_name="DistDQN"):
+
+        super(SnakeQQTTAgent, self).__init__(model_name=model_name)
+
+        tf.reset_default_graph()
+        self.agent_net = QQTTTable(self.num_actions, state_shape=state_shape,
+                                   num_colors=num_colors,tt_rank=tt_rank, 
+                                   optimizer=optimizer, dtype=tf.float32, scope="agent")
+        self.target_net = QQTTTable(self.num_actions, state_shape=state_shape,
+                                    num_colors=num_colors,tt_rank=tt_rank,
+                                    optimizer=optimizer, dtype=tf.float32, scope="target")
+        self.init_weights()
+
+    def update_agent_weights(self, sess, batch):
+
+        # estimate the right hand side of Bellman equation
+        max_actions = self.agent_net.get_q_argmax(sess, batch.s_)
+        q_values = self.target_net.get_q_values(sess, batch.s_)
+        double_q = q_values[np.arange(self.batch_size), max_actions]
+        targets = batch.r + (self.gamma * double_q * batch.end)
+
+        # update agent network
+        self.agent_net.update(sess, batch.s, batch.a, targets)

@@ -2,6 +2,7 @@ import numpy as np
 import random
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
+import t3f
 from collections import deque, namedtuple
 from tensorflow.contrib import rnn
 ####################################################################################################
@@ -269,6 +270,83 @@ class DistQNetwork:
             m[np.arange(batch_size), u.astype(int)] += probs[:,j] * (b - l)
 
         return m
+
+    
+####################################################################################################
+######################################## TensorTrain Q-Table #######################################
+####################################################################################################
+
+class QQTTTable:
+    
+    def __init__(self, num_actions, num_colors=2, state_shape=[8, 8, 3],
+                 tt_rank=24, optimizer=tf.train.AdamOptimizer(2.5e-4), 
+                 dtype=tf.float32, scope="qqtt_network", reuse=False):
+        
+        input_shape = np.prod(state_shape) * [num_colors,] + [num_actions,]
+        
+        with tf.variable_scope(scope, reuse=reuse):
+            
+            # random initialization of Q-tensor
+            q0init = t3f.random_tensor(shape=input_shape, tt_rank=tt_rank, stddev=1e-3)
+            q0init = t3f.cast(q0init, dtype=dtype)
+            q0 = t3f.get_variable('Q', initializer=q0init)
+        
+            self.input_states = tf.placeholder(dtype=tf.int32, shape=[None]+state_shape)
+            self.input_actions = tf.placeholder(dtype=tf.int32, shape=[None])
+            self.input_targets = tf.placeholder(dtype=dtype, shape=[None])
+
+            reshaped_s = tf.reshape(self.input_states, (-1, np.prod(state_shape)))
+            reshaped_a = tf.reshape(self.input_actions, (-1, 1))
+            input_s_and_a = tf.concat([reshaped_s, reshaped_a], axis=1) 
+            self.q_selected = t3f.gather_nd(q0, input_s_and_a, dtype=dtype)
+
+            reshaped_s_ = tf.reshape(self.input_states, [-1]+state_shape)
+            
+            # some shitty code
+            s_a_idx = tf.concat(num_actions * [reshaped_s], axis=0) 
+            actions_range = tf.range(start=0, limit=num_actions)
+            a_idx = self.tf_repeat(actions_range, tf.shape(self.input_states)[0:1])
+            s_a_idx = tf.concat([s_a_idx, a_idx], axis=1)
+            vals = t3f.gather_nd(q0, s_a_idx, dtype=dtype)
+            self.q_values = tf.transpose(tf.reshape(vals, shape=(num_actions, -1)))
+            # shitty code ends here
+            
+            self.q_argmax = tf.argmax(self.q_values, axis=1)
+            self.q_max = tf.reduce_max(self.q_values, axis=1)
+            
+            self.loss = tf.losses.huber_loss(self.q_selected, self.input_targets)
+            self.update_model = optimizer.minimize(self.loss)
+        
+    def update(self, sess, states, actions, targets):
+        feed_dict = {self.input_states:states,
+                     self.input_actions:actions,
+                     self.input_targets:targets}
+        sess.run(self.update_model, feed_dict)
+        
+    def get_q_action_values(self, sess, states, actions):
+        feed_dict = {self.input_states:states,
+                     self.input_actions:actions}
+        return sess.run(self.q_selected, feed_dict=feed_dict)
+        
+    def get_q_argmax(self, sess, states):
+        feed_dict = {self.input_states:states}
+        return sess.run(self.q_argmax, feed_dict=feed_dict)
+    
+    def get_q_max(self, sess, states):
+        feed_dict = {self.input_states:states}
+        return sess.run(self.q_max, feed_dict=feed_dict)
+    
+    def get_q_values(self, sess, states):
+        feed_dict = {self.input_states:states}
+        q_values = sess.run(self.q_values, feed_dict)
+        return q_values
+    
+    def tf_repeat(self, x, num):
+        u = tf.reshape(x, (-1, 1))
+        ones = tf.ones(1, dtype=tf.int32)
+        u = tf.tile(u, tf.concat([ones, num], axis=0))
+        u = tf.reshape(u, (-1, 1))
+        return u
 
 ####################################################################################################
 ##################################### Policy Gradient Network ######################################
