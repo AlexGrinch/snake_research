@@ -16,7 +16,7 @@ from IPython import display
 import matplotlib.pyplot as plt
 
 from environments import Snake
-from methods import QNetwork, DistQNetwork, ReplayMemory, QQTTTable
+from methods import *
 
 ############################## Snake agent template ##############################
 
@@ -295,6 +295,39 @@ class SnakeDQNAgent(SnakeAgent):
         self.target_net = QNetwork(self.num_actions, state_shape=state_shape,
                                    convs=convs, fully_connected=fully_connected, 
                                    optimizer=optimizer, scope="target")
+        self.init_weights()
+        
+        
+    def update_agent_weights(self, sess, batch):
+        
+        # estimate the right hand side of Bellman equation
+        max_actions = self.agent_net.get_q_argmax(sess, batch.s_)
+        q_values = self.target_net.get_q_values(sess, batch.s_)
+        double_q = q_values[np.arange(self.batch_size), max_actions]
+        targets = batch.r + (self.gamma * double_q * batch.end)
+
+        # update agent network
+        self.agent_net.update(sess, batch.s, batch.a, targets)
+        
+############################## Deep Q-Network agent ##############################
+
+class SnakeDuelDQNAgent(SnakeAgent):
+    
+    def __init__(self, state_shape=[4, 4, 3], 
+                 convs=[[16, 2, 1], [32, 1, 1]], 
+                 fully_connected=[128],
+                 optimizer=tf.train.AdamOptimizer(2.5e-4),
+                 model_name="DQN"):
+        
+        super(SnakeDuelDQNAgent, self).__init__(model_name=model_name)
+        
+        tf.reset_default_graph()
+        self.agent_net = DuelQNetwork(self.num_actions, state_shape=state_shape,
+                                      convs=convs, fully_connected=fully_connected,
+                                      optimizer=optimizer, scope="agent")
+        self.target_net = DuelQNetwork(self.num_actions, state_shape=state_shape,
+                                       convs=convs, fully_connected=fully_connected,
+                                       optimizer=optimizer, scope="target")
         self.init_weights()
         
         
