@@ -166,8 +166,9 @@ class DuelQNetwork:
                                                stride=stride,
                                                padding='VALID',
                                                activation_fn=tf.nn.relu)
-            out = layers.flatten(out)
-            adv, val = tf.split(out, num_or_size_splits=2, axis=1)
+            adv, val = tf.split(out, num_or_size_splits=2, axis=3)
+            adv = layers.flatten(adv)
+            val = layers.flatten(val)
 
             # advantage function estimation
             with tf.variable_scope("advantage"):

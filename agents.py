@@ -18,11 +18,15 @@ import matplotlib.pyplot as plt
 from environments import Snake
 from methods import *
 
+def softmax(x):
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum()
+
 ############################## Snake agent template ##############################
 
 class SnakeAgent:
     
-    def __init__(self, state_shape=[4, 4, 1], model_name="baseline_agent"):
+    def __init__(self, state_shape=[4, 4, 3], model_name="baseline_agent"):
         
         """Class for training and evaluating DQN agent on Atari games
         
@@ -41,7 +45,7 @@ class SnakeAgent:
         self.train_env = Snake(grid_size=state_shape[:-1])
         self.num_actions = 3
             
-        self.path = "snake_models" + "/" + model_name
+        self.path = "snake_models/" + model_name
         if not os.path.exists(self.path):
             os.makedirs(self.path)
             
@@ -88,6 +92,7 @@ class SnakeAgent:
     def train(self,
               gpu_id=0,
               batch_size=32,
+              exploration="e-greedy",
               agent_update_freq=4,
               target_update_freq=5000,
               tau=1,
@@ -136,10 +141,7 @@ class SnakeAgent:
                 for time_step in range(self.max_ep_length):
                     
                     # choose action e-greedily
-                    if np.random.rand(1) < self.eps:
-                        a = np.random.randint(self.num_actions)
-                    else:
-                        a = self.agent_net.get_q_argmax(sess, [s])
+                    a = self.choose_action(sess, s, exploration)
                         
                     # make step in the environment    
                     s_, r, end = self.train_env.step(a)
@@ -194,6 +196,25 @@ class SnakeAgent:
                     print("epsilon:", round(self.eps, 3))
                     print("average lifetime:", avg_lifetime) 
                     print("-------------------------------")
+                    
+    def choose_action(self, sess, s, exploration="e-greedy"):
+        
+        if (exploration == "greedy"):
+            a = self.agent_net.get_q_argmax(sess, [s])
+        elif (exploration == "e-greedy"):
+            if np.random.rand(1) < self.eps:
+                a = np.random.randint(self.num_actions)
+            else:
+                a = self.agent_net.get_q_argmax(sess, [s])     
+        elif (exploration == "boltzmann"):
+            q_values = self.agent_net.get_q_values(sess, [s])
+            logits = q_values / self.eps
+            probs = softmax(logits).ravel()
+            a = np.random.choice(self.num_actions, p=probs)
+        else:
+            return 0
+        return a
+            
                     
     def update_agent_weights(self, sess, batch):
         pass
@@ -286,7 +307,8 @@ class SnakeDQNAgent(SnakeAgent):
                  optimizer=tf.train.AdamOptimizer(2.5e-4),
                  model_name="DQN"):
         
-        super(SnakeDQNAgent, self).__init__(model_name=model_name)
+        super(SnakeDQNAgent, self).__init__(state_shape=state_shape,
+                                            model_name=model_name)
         
         tf.reset_default_graph()
         self.agent_net = QNetwork(self.num_actions, state_shape=state_shape,
@@ -319,7 +341,8 @@ class SnakeDuelDQNAgent(SnakeAgent):
                  optimizer=tf.train.AdamOptimizer(2.5e-4),
                  model_name="DQN"):
         
-        super(SnakeDuelDQNAgent, self).__init__(model_name=model_name)
+        super(SnakeDuelDQNAgent, self).__init__(state_shape=state_shape,
+                                                model_name=model_name)
         
         tf.reset_default_graph()
         self.agent_net = DuelQNetwork(self.num_actions, state_shape=state_shape,
@@ -354,7 +377,8 @@ class SnakeDistDQNAgent(SnakeAgent):
                  optimizer=tf.train.AdamOptimizer(2.5e-4, epsilon=0.01/32),
                  model_name="DistDQN"):
 
-        super(SnakeDistDQNAgent, self).__init__(model_name=model_name)
+        super(SnakeDistDQNAgent, self).__init__(state_shape=state_shape,
+                                                model_name=model_name)
 
         tf.reset_default_graph()
         self.agent_net = DistQNetwork(self.num_actions, state_shape=state_shape,
@@ -388,7 +412,8 @@ class SnakeQQTTAgent(SnakeAgent):
                  optimizer=tf.train.AdamOptimizer(2.5e-4, epsilon=0.01/32),
                  model_name="DistDQN"):
 
-        super(SnakeQQTTAgent, self).__init__(model_name=model_name)
+        super(SnakeQQTTAgent, self).__init__(state_shape=state_shape,
+                                             model_name=model_name)
 
         tf.reset_default_graph()
         self.agent_net = QQTTTable(self.num_actions, state_shape=state_shape,
