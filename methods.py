@@ -910,3 +910,43 @@ class ReplayMemory:
 
     def __len__(self):
         return len(self.memory)
+
+  
+class ReplayMemoryPrio(ReplayMemory):
+
+    def __init__(self, capacity, preprocess_fn=None):
+        super(ReplayMemoryPrio, self).__init__(capacity)
+        self.p = []
+        self.preprocess_fn = preprocess_fn
+
+    def push(self, p, *args):
+        """Saves a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+            self.p.append(None)
+        self.memory[self.position] = [*args]
+        self.p[self.position] = p
+        self.position = (self.position + 1) % self.capacity
+
+    def push_episode(self, episode_list):
+        raise NotImplementedError('push_episode is not implemented yet')
+
+    def get_batch(self, batch_size):
+
+        p_ = np.array(self.p)
+
+        if self.preprocess_fn is None:
+            p = p_ / p_.sum()
+        else:
+            p = self.preprocess_fn(p_)
+        
+        batch_idx = np.random.choice(len(self.memory), batch_size, p=p,
+                                     replace=False)
+        batch = [self.memory[i] for i in batch_idx]
+        batch = np.reshape(batch, [batch_size, 5])
+        s = np.stack(batch[:, 0])
+        a = batch[:, 1]
+        r = batch[:, 2]
+        s_ = np.stack(batch[:, 3])
+        end = 1 - batch[:, 4]
+        return self.transition(s, a, r, s_, end)
