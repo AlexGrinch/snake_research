@@ -91,7 +91,10 @@ class Snake:
         
         # snake dies if hitting its tail with head
         if self.state[x_, y_] == 1:
-            return self.get_state(), -1, True
+            if (x_ == self.x[0] and y_ == self.y[0]):
+                pass
+            else:
+                return self.get_state(), -1, True
         
         self.x.append(x_)
         self.y.append(y_)
@@ -102,18 +105,19 @@ class Snake:
             return self.get_state(), 1, self.generate_food()
 
         # snake moves forward if cell ahead is empty
-        if self.state[x_, y_] == 0:
-            self.state[x_, y_] = 1
-            self.state[self.x[0], self.y[0]] = 0
-            self.x = self.x[1:]
-            self.y = self.y[1:]
-            return self.get_state(), 0, False  
+        # or currently occupied by its tail
+        self.state[x_, y_] = 1
+        self.state[self.x[0], self.y[0]] = 0
+        self.x = self.x[1:]
+        self.y = self.y[1:]
+        return self.get_state(), 0, False  
         
     def get_state(self):
-        state = np.zeros((self.height, self.width, 3))
-        state[self.x[:-1], self.y[:-1], 0] = 1
+        state = np.zeros((self.height, self.width, 4))
+        state[self.x[1:-1], self.y[1:-1], 0] = 1
         state[self.x[-1], self.y[-1], 1] = 1
-        state[self.food[0], self.food[1], 2] = 1
+        state[self.x[0], self.y[0], 2] = 1
+        state[self.food[0], self.food[1], 3] = 1
         return state
         
     def generate_food(self):

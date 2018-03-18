@@ -911,7 +911,7 @@ class ReplayMemory:
     def __len__(self):
         return len(self.memory)
 
-  
+    
 class ReplayMemoryPrio(ReplayMemory):
 
     def __init__(self, capacity, preprocess_fn=None):
