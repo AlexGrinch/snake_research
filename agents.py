@@ -101,14 +101,7 @@ class SnakeAgent:
               save_freq=10000, 
               from_epoch=0):
         
-        if (gpu_id == -1):
-            config = tf.ConfigProto()
-        else:
-            os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-            config = tf.ConfigProto()
-            config.gpu_options.allow_growth = True
-            
+        config = self.gpu_config(gpu_id)
         target_ops = self.update_target_graph(tau)
         self.batch_size = batch_size
         
@@ -235,14 +228,7 @@ class SnakeAgent:
              max_episode_length=2000,
              from_epoch=0):
         
-        if (gpu_id == -1):
-            config = tf.ConfigProto()
-        else:
-            os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-            config = tf.ConfigProto()
-            config.gpu_options.allow_growth = True        
-            
+        config = self.gpu_config(gpu_id)       
         with tf.Session(config=config) as sess:
             self.saver.restore(sess, self.path+"/model-"+str(from_epoch))
             s = self.train_env.reset()
@@ -251,51 +237,104 @@ class SnakeAgent:
                 a = self.agent_net.get_q_argmax(sess, [s])[0]
                 s, r, done = self.train_env.step(a)
                 R += r
-                
                 self.train_env.plot_state()
                 display.clear_output(wait=True)
                 display.display(plt.gcf())
-                
                 if done: break
         return R
     
-    def test_agent(self,
-                   gpu_id=0,
-                   num_episodes=10,
-                   max_episode_length=2000,
-                   from_epoch=0):
+    def play_n_episodes(self,
+                        num_episodes=1,
+                        gpu_id=0,
+                        max_episode_length=2000,
+                        exploration='greedy',
+                        from_epoch=0):
         
+        config = self.gpu_config(gpu_id)
+        with tf.Session(config=config) as sess:
+            self.saver.restore(sess, self.path+"/model-"+str(from_epoch))
+            states_history = []
+            reward_history = []
+            for episode_count in range(num_episodes):
+                s = self.train_env.reset()
+                ep_reward = 0
+                ep_states = [s]
+                for time_step in range(max_episode_length):
+                    a = self.choose_action(sess, s, exploration)
+                    s, r, done = self.train_env.step(a)
+                    ep_reward += r
+                    ep_states.append(s)
+                    if done: break
+                states_history.append(ep_states)
+                reward_history.append(ep_reward)
+        return states_history, reward_history  
+    
+    def play_n_episodes_with_gradients(self,
+                        num_episodes=1,
+                        gpu_id=0,
+                        max_episode_length=2000,
+                        exploration='greedy',
+                        from_epoch=0):
+        
+        config = self.gpu_config(gpu_id)
+        with tf.Session(config=config) as sess:
+            self.saver.restore(sess, self.path+"/model-"+str(from_epoch))
+            states_history = []
+            reward_history = []
+            gradients_history = []
+            bellmans_history = []
+            for episode_count in range(num_episodes):
+                s = self.train_env.reset()
+                ep_reward = 0
+                ep_states = [s]
+                ep_grads = []
+             
+                q_values = []
+                rewards = []
+                
+                for time_step in range(max_episode_length):
+                    a = self.choose_action(sess, s, exploration)
+                    q = self.agent_net.get_q_values(sess, [s]).ravel()[a]
+                    q_values.append(q)
+                    
+                    grad = self.agent_net.get_gradients(sess, [s], [a])
+                    
+                    ep_grads.append(grad)
+                    
+                    s, r, done = self.train_env.step(a)
+                    rewards.append(r)
+                    ep_reward += r
+                    ep_states.append(s)
+                    if done: break
+                
+                qs = np.array(q_values)
+                next_qs = np.concatenate((qs[1:], np.zeros(1)))
+                rs = np.array(rewards)
+                bellman_errors = np.abs(qs - (rs + self.gamma * next_qs))
+                
+                bellmans_history.append(bellman_errors)    
+                states_history.append(ep_states)
+                reward_history.append(ep_reward)
+                gradients_history.append(ep_grads)
+        return states_history, reward_history, gradients_history, bellmans_history
+    
+    def get_q_values(self, states, gpu_id=0, from_epoch=0):
+        
+        config = self.gpu_config(gpu_id)
+        with tf.Session(config=config) as sess:
+            self.saver.restore(sess, self.path+"/model-"+str(from_epoch))
+            q_values = self.agent_net.get_q_values(sess, states)
+        return q_values
+    
+    def gpu_config(self, gpu_id):
         if (gpu_id == -1):
             config = tf.ConfigProto()
         else:
             os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  
             os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
             config = tf.ConfigProto()
-            config.gpu_options.allow_growth = True        
-            
-        with tf.Session(config=config) as sess:
-            self.saver.restore(sess, self.path+"/model-"+str(from_epoch))
-            rewards = []
-            bellman_errors = []
-            for episode_count in range(num_episodes):
-                s = self.train_env.reset()
-                R = 0
-                BE = 0
-                for time_step in range(max_episode_length):
-                    a = self.agent_net.get_q_argmax(sess, [s])[0]
-                    q = self.agent_net.get_q_values(sess, [s])[0][a]
-                    
-                    s, r, done = self.train_env.step(a)
-                    a_ = self.agent_net.get_q_argmax(sess, [s])[0]
-                    q_ = self.agent_net.get_q_values(sess, [s])[0][a_]
-                    
-                    BE += np.abs(q - (r + q_))
-                    R += r
-                    if done: break
-                rewards.append(R)
-                bellman_errors.append(BE/(time_step+1))
-                
-        return rewards, bellman_errors
+            config.gpu_options.allow_growth = True
+        return config
     
 ############################## Deep Q-Network agent ##############################
 

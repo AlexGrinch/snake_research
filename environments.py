@@ -102,22 +102,24 @@ class Snake:
         # snake elongates after eating a food
         if self.state[x_, y_] == 3:
             self.state[x_, y_] = 1
-            return self.get_state(), 1, self.generate_food()
+            done = self.generate_food()
+            return self.get_state(), 1, done
 
         # snake moves forward if cell ahead is empty
         # or currently occupied by its tail
-        self.state[x_, y_] = 1
         self.state[self.x[0], self.y[0]] = 0
+        self.state[x_, y_] = 1
         self.x = self.x[1:]
         self.y = self.y[1:]
         return self.get_state(), 0, False  
         
     def get_state(self):
-        state = np.zeros((self.height, self.width, 4))
+        state = np.zeros((self.height, self.width, 5))
         state[self.x[1:-1], self.y[1:-1], 0] = 1
         state[self.x[-1], self.y[-1], 1] = 1
-        state[self.x[0], self.y[0], 2] = 1
-        state[self.food[0], self.food[1], 3] = 1
+        state[self.x[-2], self.y[-2], 2] = 1
+        state[self.x[0], self.y[0], 3] = 1
+        state[self.food[0], self.food[1], 4] = 1
         return state
         
     def generate_food(self):
@@ -140,8 +142,8 @@ class Snake:
         
     def plot_state(self):
         state = self.get_state()
-        img = sum([state[:,:,i]*(i+1) for i in range(3)])
-        plt.imshow(img, vmin=0, vmax=4, interpolation='nearest')
+        img = sum([state[:,:,i]*(i+1) for i in range(5)])
+        plt.imshow(img, vmin=0, vmax=5, interpolation='nearest')
         
     def get_neighbors(self, i, j):
         """

@@ -81,6 +81,8 @@ class QNetwork:
         self.input_actions = tf.placeholder(dtype=tf.int32, shape=[None])
         actions_onehot = tf.one_hot(self.input_actions, num_actions, dtype=tf.float32)
         q_values_selected = tf.reduce_sum(tf.multiply(self.q_values, actions_onehot), axis=1)
+        
+        self.gradients = tf.gradients(q_values_selected, self.input_states)
 
         # choose best actions (according to q-values)
         self.q_argmax = tf.argmax(self.q_values, axis=1)
@@ -90,6 +92,12 @@ class QNetwork:
         self.td_error = tf.losses.huber_loss(self.targets, q_values_selected)
         self.loss = tf.reduce_sum(self.td_error)
         self.update_model = optimizer.minimize(self.loss)
+        
+    def get_gradients(self, sess, states, actions):
+        feed_dict = {self.input_states:states,
+                     self.input_actions:actions}
+        gradients = sess.run(self.gradients, feed_dict)
+        return gradients
         
     def get_features(self, sess, states):
         feed_dict = {self.input_states:states}
@@ -123,7 +131,7 @@ class DuelQNetwork:
                  convs=[[32, 4, 2], [64, 2, 1]],
                  fully_connected=[128],
                  optimizer=tf.train.AdamOptimizer(2.5e-4),
-                 scope="q_network", reuse=False):
+                 scope="dueling_q_network", reuse=False):
 
         """Class for neural network which estimates Q-function
 
@@ -950,3 +958,42 @@ class ReplayMemoryPrio(ReplayMemory):
         s_ = np.stack(batch[:, 3])
         end = 1 - batch[:, 4]
         return self.transition(s, a, r, s_, end)
+    
+class WeightedReplayMemory:
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+        self.transition = namedtuple('Transition',
+                                     ('s', 'a', 'r', 's_', 'end', 'w'))
+
+    def push(self, *args):
+        """Saves a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = [*args]
+        self.position = (self.position + 1) % self.capacity
+        
+    def push_episode(self, episode_list):
+        
+        self.memory += episode_list
+        
+        gap = len(self.memory) - self.capacity
+        if gap > 0:
+            self.memory[:gap] = []
+
+        
+    def get_batch(self, batch_size):
+        batch = random.sample(self.memory, batch_size)
+        batch = np.reshape(batch, [batch_size, 5])
+        s = np.stack(batch[:,0])
+        a = batch[:,1]
+        r = batch[:,2]
+        s_ = np.stack(batch[:,3])
+        end = 1 - batch[:,4]
+        w = batch[:,5]
+        return self.transition(s, a, r, s_, end, w)
+
+    def __len__(self):
+        return len(self.memory)
