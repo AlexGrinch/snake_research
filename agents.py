@@ -18,6 +18,9 @@ import matplotlib.pyplot as plt
 from environments import Snake
 from methods import *
 
+
+from queue import Queue
+
 def softmax(x):
     e_x = np.exp(x - np.max(x))
     return e_x / e_x.sum()
@@ -318,6 +321,43 @@ class SnakeAgent:
                 gradients_history.append(ep_grads)
         return states_history, reward_history, gradients_history, bellmans_history
     
+    def play_n_episodes_with_actions_and_rewards(self,
+                        num_episodes=1,
+                        gpu_id=0,
+                        max_episode_length=2000,
+                        exploration='greedy',
+                        from_epoch=0):
+        
+        config = self.gpu_config(gpu_id)
+        with tf.Session(config=config) as sess:
+            self.saver.restore(sess, self.path+"/model-"+str(from_epoch))
+            states_history = []
+            reward_history = []
+            action_history = []
+            for episode_count in range(num_episodes):
+                s = self.train_env.reset()
+                #ep_reward = 0
+                ep_states = [s]               
+                ep_actions = []
+                ep_rewards = []
+                
+                for time_step in range(max_episode_length):
+                    a = self.choose_action(sess, s, exploration)
+                    s, r, done = self.train_env.step(a)
+                    #ep_reward += r
+                    ep_states.append(s)
+                    ep_actions.append(a)
+                    ep_rewards.append(r)
+                    if done: break
+                states_history.append(ep_states)
+                reward_history.append(ep_rewards)
+                action_history.append(ep_actions)
+        return states_history, reward_history, action_history
+    
+    
+    
+    
+    
     def get_q_values(self, states, gpu_id=0, from_epoch=0):
         
         config = self.gpu_config(gpu_id)
@@ -473,3 +513,229 @@ class SnakeQQTTAgent(SnakeAgent):
 
         # update agent network
         self.agent_net.update(sess, batch.s, batch.a, targets)
+        
+        
+        
+#################################### SnakeDQNAgentFisherI(SnakeDQNAgent) ###################################   
+
+class SnakeDQNAgentFisherI(SnakeDQNAgent):
+    
+    def __init__(self, state_shape=[4, 4, 3], 
+                 convs=[[16, 2, 1], [32, 1, 1]], 
+                 fully_connected=[128],
+                 optimizer=tf.train.AdamOptimizer(2.5e-4),
+                 model_name="DQN"):
+        
+        super(SnakeDQNAgentFisherI, self).__init__(state_shape=state_shape, convs=convs,
+                                                   fully_connected=fully_connected,
+                                                   optimizer=optimizer, model_name=model_name)
+        
+        print("Constructing symbolic matvecs...")
+        self.construct_matvecs()
+        print("Done")
+    
+    def construct_matvecs(self):
+        
+        var_list = tf.trainable_variables()
+        
+        n = len(var_list) // 2 - 1
+        
+        self.num_agent_vars = n 
+        
+        agent_vars = var_list[:n]
+        
+        self.agent_vars = agent_vars
+        
+        loss_ = self.agent_net.loss
+        
+        shapes = [v.shape.as_list() for v in agent_vars]
+        
+        self.shapes = shapes
+        
+        self.v = [tf.placeholder(tf.float32, shape) for shape in shapes]      
+        self.w = [tf.placeholder(tf.float32, shape) for shape in shapes]
+        
+        dloss = tf.gradients(loss_, agent_vars)
+        
+        dloss_v_ = []
+        for i in range(n):
+            dloss_v_.append(tf.reduce_sum(tf.multiply(dloss[i], self.v[i])))
+            
+        dloss_v = []
+
+        for i in range(n):
+            dloss_v.append(tf.gradients(dloss_v_[i], agent_vars[i])[0])
+            
+        
+        self.dloss_v = dloss_v
+        
+        dloss_w_ = []
+        
+        for i in range(n):
+            dloss_w_.append(tf.reduce_sum(tf.multiply(dloss_v[i], self.w[i])))
+                 
+        dloss_w = []
+        
+        for i in range(n):
+            dloss_w.append(tf.gradients(dloss_w_[i], self.v[i])[0])
+            
+        self.dloss_w = dloss_w
+        
+    
+    def get_fisher_singular_value(self, sess, s, r, a, s_, end, maxiter=10):
+        
+        max_actions = self.agent_net.get_q_argmax(sess, [s_])
+        q_values = self.target_net.get_q_values(sess, [s_])
+        double_q = q_values[0, max_actions]
+        targets = r + (self.gamma * double_q * end)
+        
+        x0 = [np.random.rand(*shape) for shape in self.shapes]
+        
+        size = sum([np.prod(shape) for shape in self.shapes])
+        
+        def tricky_norm(x0):
+            s = 0
+            for x_ in x0:
+                s += np.sum(x_ ** 2)    
+            return np.sqrt(s)
+        
+        def normalize(x0):
+            a = tricky_norm(x0)
+            
+            for i, x_ in enumerate(x0):
+                x0[i] = x_ / a
+        
+      
+        zero_vec = [np.zeros(shape) for shape in self.shapes]
+        
+        normalize(x0)
+        
+        
+        for i in range(maxiter):
+
+            feed_dict = {}
+            feed_dict[self.agent_net.input_states] = [s,]
+            feed_dict[self.agent_net.input_actions] = [a,]
+            feed_dict[self.agent_net.targets] = targets
+            
+     
+            for j in range(self.num_agent_vars):             
+                feed_dict[self.v[j]] = x0[j]
+            
+
+            
+            for j in range(self.num_agent_vars):             
+                feed_dict[self.v[j]] = zero_vec[j]
+                feed_dict[self.w[j]] = x0[j]
+            
+            x0 = sess.run(self.dloss_w, feed_dict=feed_dict)
+            if i == maxiter - 1:
+                sing_val = tricky_norm(x0)
+            normalize(x0)     
+        return sing_val
+        
+
+    def train(self,
+              gpu_id=0,
+              batch_size=32,
+              exploration="e-greedy",
+              agent_update_freq=4,
+              target_update_freq=5000,
+              tau=1,
+              max_num_epochs=50000,
+              performance_print_freq=500,
+              save_freq=10000, 
+              from_epoch=0):
+        
+        config = self.gpu_config(gpu_id)
+        target_ops = self.update_target_graph(tau)
+        self.batch_size = batch_size
+        
+        with tf.Session(config=config) as sess:
+            
+            if from_epoch == 0:
+                sess.run(self.init)
+                train_rewards = []
+                frame_counts = []
+                frame_count = 0
+                num_epochs = 0
+                
+            else:
+                self.saver.restore(sess, self.path+"/model-"+str(from_epoch))
+                train_rewards = list(np.load(self.path+"/learning_curve.npz")["r"])
+                frame_counts = list(np.load(self.path+"/learning_curve.npz")["f"])
+                frame_count = frame_counts[-1]
+                num_epochs = from_epoch
+    
+            episode_count = 0
+            ep_lifetimes = []
+            running_singular_values = Queue(500)
+            
+            while num_epochs < max_num_epochs:
+                
+                train_ep_reward = 0
+                
+                # reset the environment / start new game
+                s = self.train_env.reset()
+                for time_step in range(self.max_ep_length):
+                    
+                    # choose action e-greedily
+                    a = self.choose_action(sess, s, exploration)
+                        
+                    # make step in the environment    
+                    s_, r, end = self.train_env.step(a)
+                    
+                    fisher_info = self.get_fisher_singular_value(sess, s, r, a, s_, 1.0 - end, maxiter=10)
+                    
+                    running_singular_values.put(fisher_info)
+                    
+                    if fisher_info > np.median(np.array(list(running_singular_values.queue))):
+                        self.rep_buffer.push(s, a, r, s_, end)
+                              
+                    # update current state and statistics
+                    s = s_
+                    frame_count += 1
+                    train_ep_reward += r
+                    
+                    # reduce epsilon according to schedule
+                    if self.eps > self.final_eps:
+                        self.eps -= self.eps_drop
+                    
+                    # update network weights
+                    if frame_count % agent_update_freq == 0:
+                        
+                        batch = self.rep_buffer.get_batch(batch_size)
+                        self.update_agent_weights(sess, batch)
+                        
+                        # update target network
+                        if tau == 1:
+                            if frame_count % target_update_freq == 0:
+                                self.update_target_weights(sess, target_ops)
+                        else: self.update_target_weights(sess, target_ops)
+                    
+                    # make checkpoints of network weights and save learning curve
+                    if frame_count % save_freq == 1:
+                        num_epochs += 1
+                        try:
+                            self.saver.save(sess, self.path+"/model", global_step=num_epochs)
+                            np.savez(self.path+"/learning_curve.npz", r=train_rewards, 
+                                     f=frame_counts, l=ep_lifetimes)
+                        except: pass
+                    
+                    # if game is over, reset the environment
+                    if end: break
+                         
+                episode_count += 1
+                train_rewards.append(train_ep_reward)
+                frame_counts.append(frame_count)
+                ep_lifetimes.append(time_step+1)
+                
+                # print performance once in a while
+                if episode_count % performance_print_freq == 0:
+                    avg_reward = np.mean(train_rewards[-performance_print_freq:])
+                    avg_lifetime = np.mean(ep_lifetimes[-performance_print_freq:])
+                    print("frame count:", frame_count)
+                    print("average reward:", avg_reward)
+                    print("epsilon:", round(self.eps, 3))
+                    print("average lifetime:", avg_lifetime) 
+                    print("-------------------------------")
