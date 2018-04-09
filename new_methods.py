@@ -23,7 +23,7 @@ def conv_module(input_layer, convs, activation_fn=tf.nn.relu):
                    padding='VALID',
                    activation_fn=activation_fn)
     return out
-    
+
 def fc_module(input_layer, fully_connected, activation_fn=tf.nn.relu):
     """ fully connected module
     """
@@ -43,7 +43,7 @@ def func_module(input_layer, num_inputs, num_outputs):
     out = tf.matmul(out, out_weights)
     return out
 
-def full_module(input_layer, convs, fully_connected, num_outputs, 
+def full_module(input_layer, convs, fully_connected, num_outputs,
                         activation_fn=tf.nn.relu):
     """ convolutional + fully connected + functional module
     """
@@ -61,12 +61,12 @@ def full_module(input_layer, convs, fully_connected, num_outputs,
 class DeepQNetwork:
 
     def __init__(self, num_actions, state_shape=[8, 8, 5],
-                 convs=[[32, 4, 2], [64, 2, 1]], 
+                 convs=[[32, 4, 2], [64, 2, 1]],
                  fully_connected=[128],
                  optimizer=tf.train.AdamOptimizer(2.5e-4),
                  activation_fn=tf.nn.relu,
                  scope="dqn", reuse=False):
-        
+
         with tf.variable_scope(scope, reuse=reuse):
 
             ###################### Neural network architecture ######################
@@ -109,13 +109,13 @@ class DeepQNetwork:
                      self.input_actions:actions,
                      self.targets:targets}
         sess.run(self.update_model, feed_dict)
-        
+
 ####################################################################################################
 ###################################### Dueling Deep Q-Network ######################################
-#################################################################################################### 
+####################################################################################################
 
 class DuelingDeepQNetwork:
-    
+
     def __init__(self, num_actions, state_shape=[8, 8, 5],
                  convs=[[32, 4, 2], [64, 2, 1]],
                  fully_connected=[64],
@@ -124,25 +124,25 @@ class DuelingDeepQNetwork:
                  scope="duel_dqn", reuse=False):
 
         with tf.variable_scope(scope, reuse=reuse):
-            
+
             ###################### Neural network architecture ######################
-            
+
             input_shape = [None] + state_shape
             self.input_states = tf.placeholder(dtype=tf.float32, shape=input_shape)
-            
+
             out = conv_module(self.input_states, convs, activation_fn)
             val, adv = tf.split(out, num_or_size_splits=2, axis=3)
-            
+
             with tf.variable_scope(scope+"/value", reuse=reuse):
                 val = layers.flatten(val)
                 val = fc_module(val, fully_connected, activation_fn)
                 self.v_values = func_module(val, fully_connected[-1], 1)
-                
+
             with tf.variable_scope(scope+"/advantage", reuse=reuse):
                 adv = layers.flatten(adv)
                 adv = fc_module(adv, fully_connected, activation_fn)
                 self.a_values = func_module(adv, fully_connected[-1], num_actions)
-                
+
             a_values_mean = tf.reduce_mean(self.a_values, axis=1, keepdims=True)
             a_values_centered = tf.subtract(self.a_values, a_values_mean)
             self.q_values = self.v_values + a_values_centered
@@ -179,28 +179,28 @@ class DuelingDeepQNetwork:
                      self.input_actions:actions,
                      self.targets:targets}
         sess.run(self.update_model, feed_dict)
-        
+
 ####################################################################################################
 #################################### Categorical Deep Q-Network ####################################
 ####################################################################################################
 
 class CategoricalDeepQNetwork:
-    
+
     def __init__(self, num_actions, state_shape=[8, 8, 5],
                  convs=[[32, 4, 2], [64, 2, 1]],
-                 fully_connected=[128], 
+                 fully_connected=[128],
                  num_atoms=21, v=(-10, 10),
                  activation_fn=tf.nn.relu,
                  optimizer=tf.train.AdamOptimizer(2.5e-4, epsilon=0.01/32),
                  scope="cat_dqn", reuse=False):
-        
+
         with tf.variable_scope(scope, reuse=reuse):
 
             ###################### Neural network architecture ######################
 
             input_shape = [None] + state_shape
             self.input_states = tf.placeholder(dtype=tf.float32, shape=input_shape)
-        
+
             # distribution parameters
             self.num_atoms = num_atoms
             self.v_min, self.v_max = v
@@ -279,7 +279,7 @@ class CategoricalDeepQNetwork:
             m[np.arange(batch_size), u.astype(int)] += probs[:,j] * (b - l)
 
         return m
-        
+
 ####################################################################################################
 ######################################## Soft Actor-Critic #########################################
 ####################################################################################################
@@ -287,16 +287,16 @@ class CategoricalDeepQNetwork:
 class SoftActorCriticNetwork:
 
     def __init__(self, num_actions, state_shape=[8, 8, 5],
-                 convs=[[32, 4, 2], [64, 2, 1]], 
+                 convs=[[32, 4, 2], [64, 2, 1]],
                  fully_connected=[128],
                  activation_fn=tf.nn.relu,
                  optimizers=[tf.train.AdamOptimizer(2.5e-4),
                              tf.train.AdamOptimizer(2.5e-4),
                              tf.train.AdamOptimizer(2.5e-4)],
                  scope="sac", reuse=False):
-        
+
         with tf.variable_scope(scope, reuse=reuse):
-        
+
             ###################### Neural network architecture ######################
 
             input_shape = [None] + state_shape
@@ -305,11 +305,11 @@ class SoftActorCriticNetwork:
             with tf.variable_scope("value", reuse=reuse):
                 self.v_values = full_module(self.input_states, convs, fully_connected,
                                             1, activation_fn)
-            
+
             with tf.variable_scope("qfunc", reuse=reuse):
                 self.q_values = full_module(self.input_states, convs, fully_connected,
                                             num_actions, activation_fn)
-            
+
             with tf.variable_scope("policy", reuse=reuse):
                 self.p_logits = full_module(self.input_states, convs, fully_connected,
                                             num_actions, activation_fn)
@@ -357,37 +357,37 @@ class SoftActorCriticNetwork:
         feed_dict = {self.input_states:states}
         q_values = sess.run(self.q_values, feed_dict)
         return q_values
-    
+
     def get_v_values(self, sess, states):
         feed_dict = {self.input_states:states}
         v_values = sess.run(self.v_values, feed_dict)
         return v_values
-    
+
     def get_p_logits(self, sess, states):
         feed_dict = {self.input_states:states}
         p_logits = sess.run(self.p_logits, feed_dict)
         return p_logits
-    
+
     def get_p_values(self, sess, states):
         feed_dict = {self.input_states:states}
         p_values = sess.run(self.p_values, feed_dict)
         return p_values
 
     def update_q(self, sess, states, actions, q_targets):
-        
+
         feed_dict = {self.input_states:states,
                      self.input_actions:actions,
                      self.q_targets:q_targets}
         sess.run(self.update_q_values, feed_dict)
-        
+
     def update_v(self, sess, states, v_targets):
-        
+
         feed_dict = {self.input_states:states,
                      self.v_targets:v_targets}
         sess.run(self.update_v_values, feed_dict)
-        
+
     def update_p(self, sess, states, actions, p_targets):
-        
+
         feed_dict = {self.input_states:states,
                      self.input_actions:actions,
                      self.p_targets:p_targets}
@@ -400,7 +400,7 @@ class SoftActorCriticNetwork:
 class GaussianDeepQNetwork:
 
     def __init__(self, num_actions, state_shape=[8, 8, 5],
-                 convs=[[32, 4, 2], [64, 2, 1]], 
+                 convs=[[32, 4, 2], [64, 2, 1]],
                  fully_connected=[128],
                  optimizer=tf.train.AdamOptimizer(2.5e-4),
                  activation_fn=tf.nn.relu,
@@ -457,7 +457,7 @@ class GaussianDeepQNetwork:
         feed_dict = {self.input_states:states}
         q_values = sess.run(self.mu, feed_dict)
         return q_values
-    
+
     def get_mu_sigma(self, sess, states):
         feed_dict = {self.input_states:states}
         mu, sigma = sess.run([self.mu, self.sigma], feed_dict)
@@ -469,12 +469,122 @@ class GaussianDeepQNetwork:
                      self.input_actions:actions,
                      self.mu_targets:mu_targets,
                      self.sigma_targets:sigma_targets}
-        sess.run(self.update_model, feed_dict)        
-        
+        sess.run(self.update_model, feed_dict)
+
+
+class GMMDeepQNetwork:
+
+    def __init__(self, num_actions, state_shape=[8, 8, 5],
+                 convs=[[32, 4, 2], [64, 2, 1]],
+                 fully_connected=[128],
+                 optimizer=tf.train.AdamOptimizer(2.5e-4),
+                 activation_fn=tf.nn.relu,
+                 mixture_size=2,
+                 scope="gmm_boi", reuse=False):
+
+        ###################### Neural network architecture ######################
+
+        input_shape = [None] + state_shape
+        self.input_states = tf.placeholder(dtype=tf.float32, shape=input_shape)
+
+        with tf.variable_scope(scope, reuse=reuse):
+            out = conv_module(self.input_states, convs, activation_fn)
+            out = layers.flatten(out)
+            out = fc_module(out, fully_connected, activation_fn)
+            out = fc_module(out, [num_actions * mixture_size * 3], None)
+            out = tf.reshape(out, (-1, num_actions, mixture_size, 3))
+
+            mu, sigma, pi = tf.unstack(out, axis=-1)
+            self.mu = mu
+            self.sigma = tf.abs(sigma)
+            self.pi = tf.nn.softmax(pi, axis=2)
+
+            self.q_values = tf.reduce_sum(tf.multiply(self.pi, self.mu), axis=2)
+
+
+            ######################### Optimization procedure ########################
+
+            # one-hot encode actions to get q-values for state-action pairs
+            self.input_actions = tf.placeholder(dtype=tf.int32, shape=[None])
+            actions_onehot = tf.one_hot(self.input_actions, num_actions, dtype=tf.float32)
+            actions_onehot_reshaped = tf.reshape(actions_onehot, [-1, num_actions, 1])
+
+            mu_selected = tf.reduce_sum(tf.multiply(self.mu, actions_onehot_reshaped), axis=1)
+            sigma_selected = tf.reduce_sum(tf.multiply(self.sigma, actions_onehot_reshaped), axis=1)
+            pi_selected = tf.reduce_sum(tf.multiply(self.pi, actions_onehot_reshaped), axis=1)
+
+            # choose best actions (according to q-values)
+            self.q_argmax = tf.argmax(self.q_values, axis=1)
+
+            # create loss function and update rule
+            self.mu_targets = tf.placeholder(dtype=tf.float32, shape=[None, mixture_size])
+            self.sigma_targets = tf.placeholder(dtype=tf.float32, shape=[None, mixture_size])
+            self.pi_targets = tf.placeholder(dtype=tf.float32, shape=[None, mixture_size])
+
+            # def kl_gaussians(m1, s1, m2, s2):
+            #     m1 = m1[:, :, None]
+            #     m2 = m2[:, None, :]
+            #     s1_2 = tf.square(s1)
+            #     s2_2 = tf.square(s2)
+            #     s1_2 = s1_2[:, :, None]
+            #     s2_2 = s2_2[:, None, :]
+            #     t1 = 0.5 * (tf.log(s2_2 / s1_2 + 1e-5))
+            #     t2 = (s1_2 + (m2 - m1) ** 2) / (2 * s2_2)
+            #     return t1 + t2 - 0.5
+            #
+            # def kl_mixtures(p1, m1, s1, p2, m2, s2):
+            #     kl1 = kl_gaussians(m1, s1, m1, s1)
+            #     kl2 = kl_gaussians(m1, s1, m2, s2)
+            #     kl1 = tf.exp(-kl1)
+            #     kl2 = tf.exp(-kl2)
+            #
+            #     t1 = tf.einsum('abc,ac->ab', kl1, p1)
+            #     t2 = tf.einsum('abc,ac->ab', kl2, p2)
+            #     return tf.reduce_mean(tf.multiply(p1, tf.log(t1 / t2 + 1e-5)))
+
+            #self.loss = kl_mixtures(pi_selected, mu_selected, sigma_selected,
+            #                        self.pi_targets, self.mu_targets, self.sigma_targets)
+
+            self.loss = tf.reduce_mean((mu_selected - self.mu_targets) ** 2) + tf.reduce_mean((sigma_selected - self.sigma_targets) ** 2) + tf.reduce_mean((pi_selected - self.pi_targets) ** 2)
+            #self.loss = tf.reduce_sum(mu_loss + sigma_loss)
+            self.update_model = optimizer.minimize(self.loss)
+
+    def get_q_argmax(self, sess, states):
+        feed_dict = {self.input_states:states}
+        q_argmax = sess.run(self.q_argmax, feed_dict)
+        return q_argmax
+
+    def get_q_values(self, sess, states):
+        feed_dict = {self.input_states:states}
+        q_values = sess.run(self.q_values, feed_dict)
+        return q_values
+
+    def get_pi_mu_sigma(self, sess, states):
+        feed_dict = {self.input_states:states}
+        pi, mu, sigma = sess.run([self.pi, self.mu, self.sigma], feed_dict)
+        return pi, mu, sigma
+
+    def update(self, sess, states, actions, pi_targets, mu_targets, sigma_targets):
+
+        feed_dict = {self.input_states:states,
+                     self.input_actions:actions,
+                     self.pi_targets:pi_targets,
+                     self.mu_targets:mu_targets,
+                     self.sigma_targets:sigma_targets}
+
+        # print ('pi', pi_targets)
+        # print ('mu', mu_targets)
+        # print ('sigma', sigma_targets)
+
+
+        sess.run(self.update_model, feed_dict)
+
+
+
 ####################################################################################################
 ######################################## Experience Replay #########################################
-####################################################################################################        
-        
+####################################################################################################
+
 class ReplayMemory:
 
     def __init__(self, capacity):
@@ -491,7 +601,7 @@ class ReplayMemory:
             self.memory.append(None)
         self.memory[self.position] = [*args]
         self.position = (self.position + 1) % self.capacity
-        
+
     def push_episode(self, episode_list):
         """ push whole episode into buffer
         """
@@ -500,7 +610,7 @@ class ReplayMemory:
         if gap > 0:
             self.memory[:gap] = []
 
-        
+
     def get_batch(self, batch_size):
         batch = random.sample(self.memory, batch_size)
         batch = np.reshape(batch, [batch_size, 5])
