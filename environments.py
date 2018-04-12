@@ -145,6 +145,11 @@ class Snake:
         img = sum([state[:,:,i]*(i+1) for i in range(5)])
         plt.imshow(img, vmin=0, vmax=5, interpolation='nearest')
         
+    def get_image(self):
+        state = self.get_state()
+        img = sum([state[:,:,i]*(i+1) for i in range(5)])
+        return img
+        
     def get_neighbors(self, i, j):
         """
         Get all the neighbors of the point (i, j)

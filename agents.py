@@ -538,7 +538,7 @@ class SnakeDQNAgentFisherI(SnakeDQNAgent):
         
         var_list = tf.trainable_variables()
         
-        n = len(var_list) // 2 - 1
+        n = len(var_list) // 2
         
         self.num_agent_vars = n 
         
@@ -548,91 +548,28 @@ class SnakeDQNAgentFisherI(SnakeDQNAgent):
         
         loss_ = self.agent_net.loss
         
-        shapes = [v.shape.as_list() for v in agent_vars]
-        
-        self.shapes = shapes
-        
-        self.v = [tf.placeholder(tf.float32, shape) for shape in shapes]      
-        self.w = [tf.placeholder(tf.float32, shape) for shape in shapes]
-        
-        dloss = tf.gradients(loss_, agent_vars)
-        
-        dloss_v_ = []
-        for i in range(n):
-            dloss_v_.append(tf.reduce_sum(tf.multiply(dloss[i], self.v[i])))
-            
-        dloss_v = []
-
-        for i in range(n):
-            dloss_v.append(tf.gradients(dloss_v_[i], agent_vars[i])[0])
-            
-        
-        self.dloss_v = dloss_v
-        
-        dloss_w_ = []
-        
-        for i in range(n):
-            dloss_w_.append(tf.reduce_sum(tf.multiply(dloss_v[i], self.w[i])))
-                 
-        dloss_w = []
-        
-        for i in range(n):
-            dloss_w.append(tf.gradients(dloss_w_[i], self.v[i])[0])
-            
-        self.dloss_w = dloss_w
+        grads = tf.gradients(loss_, agent_vars)
+           
+        self.fisher_info = tf.add_n([tf.reduce_sum(g * g) for g in grads])
         
     
-    def get_fisher_singular_value(self, sess, s, r, a, s_, end, maxiter=10):
+    def get_fisher_info(self, sess, s, r, a, s_, end):
         
         max_actions = self.agent_net.get_q_argmax(sess, [s_])
         q_values = self.target_net.get_q_values(sess, [s_])
         double_q = q_values[0, max_actions]
         targets = r + (self.gamma * double_q * end)
+         
         
-        x0 = [np.random.rand(*shape) for shape in self.shapes]
-        
-        size = sum([np.prod(shape) for shape in self.shapes])
-        
-        def tricky_norm(x0):
-            s = 0
-            for x_ in x0:
-                s += np.sum(x_ ** 2)    
-            return np.sqrt(s)
-        
-        def normalize(x0):
-            a = tricky_norm(x0)
-            
-            for i, x_ in enumerate(x0):
-                x0[i] = x_ / a
-        
-      
-        zero_vec = [np.zeros(shape) for shape in self.shapes]
-        
-        normalize(x0)
-        
-        
-        for i in range(maxiter):
 
-            feed_dict = {}
-            feed_dict[self.agent_net.input_states] = [s,]
-            feed_dict[self.agent_net.input_actions] = [a,]
-            feed_dict[self.agent_net.targets] = targets
-            
-     
-            for j in range(self.num_agent_vars):             
-                feed_dict[self.v[j]] = x0[j]
-            
+        feed_dict = {}
+        feed_dict[self.agent_net.input_states] = [s,]
+        feed_dict[self.agent_net.input_actions] = [a,]
+        feed_dict[self.agent_net.targets] = targets
 
-            
-            for j in range(self.num_agent_vars):             
-                feed_dict[self.v[j]] = zero_vec[j]
-                feed_dict[self.w[j]] = x0[j]
-            
-            x0 = sess.run(self.dloss_w, feed_dict=feed_dict)
-            if i == maxiter - 1:
-                sing_val = tricky_norm(x0)
-            normalize(x0)     
-        return sing_val
+        fi = sess.run(self.fisher_info, feed_dict=feed_dict)
+  
+        return fi
         
 
     def train(self,
@@ -669,7 +606,8 @@ class SnakeDQNAgentFisherI(SnakeDQNAgent):
     
             episode_count = 0
             ep_lifetimes = []
-            running_singular_values = Queue(500)
+            
+            running_singular_values = Queue(5000)
             
             while num_epochs < max_num_epochs:
                 
@@ -685,12 +623,16 @@ class SnakeDQNAgentFisherI(SnakeDQNAgent):
                     # make step in the environment    
                     s_, r, end = self.train_env.step(a)
                     
-                    fisher_info = self.get_fisher_singular_value(sess, s, r, a, s_, 1.0 - end, maxiter=10)
+                    fisher_info = self.get_fisher_info(sess, s, r, a, s_, 1.0 - end)
                     
+                    if running_singular_values.qsize() == running_singular_values.maxsize:
+                        running_singular_values.get()
+                                           
                     running_singular_values.put(fisher_info)
                     
-                    if fisher_info > np.median(np.array(list(running_singular_values.queue))):
+                    if fisher_info < np.median(np.array(list(running_singular_values.queue))):
                         self.rep_buffer.push(s, a, r, s_, end)
+                     
                               
                     # update current state and statistics
                     s = s_

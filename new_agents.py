@@ -64,7 +64,7 @@ class Agent:
             s = self.train_env.reset()
             for time_step in range(max_episode_length):
                 a = np.random.randint(self.num_actions)
-                s_, r, end = self.train_env.step(a)
+                s_, r, end = self.train_env.step(a)[:3]
                 self.rep_buffer.push(s, a, r, s_, end)
                 s = s_
                 frame_count += 1
@@ -126,7 +126,7 @@ class Agent:
                     a = self.choose_action(sess, s, exploration)
 
                     # make step in the environment
-                    s_, r, end = self.train_env.step(a)
+                    s_, r, end = self.train_env.step(a)[:3]
 
                     # save transition into experience replay
                     self.rep_buffer.push(s, a, r, s_, end)
@@ -197,11 +197,14 @@ class Agent:
             probs = self.agent_net.get_p_values(sess, [s]).ravel()
             a = np.random.choice(self.num_actions, p=probs)
         elif (exploration == "gauss"):
-            q = np.zeros(self.num_actions)
-            mu, sigma = self.agent_net.get_mu_sigma(sess, [s])
-            for a in range(self.num_actions):
-                q[a] = np.random.normal(mu[0, a], sigma[0, a])
-            a = np.argmax(q)
+            if np.random.rand(1) < self.eps:
+                a = np.random.randint(self.num_actions)
+            else:
+                q = np.zeros(self.num_actions)
+                mu, sigma = self.agent_net.get_mu_sigma(sess, [s])
+                for a in range(self.num_actions):
+                    q[a] = np.random.normal(mu[0, a], sigma[0, a])
+                a = np.argmax(q)
         else:
             return 0
         return a
@@ -242,7 +245,8 @@ class Agent:
                 a = self.agent_net.get_q_argmax(sess, [s])[0]
                 s, r, done = self.train_env.step(a)
                 R += r
-                self.train_env.plot_state()
+                
+                self.train_env.plot_state()         
                 display.clear_output(wait=True)
                 display.display(plt.gcf())
                 if done: break
@@ -476,7 +480,7 @@ class GaussDQNAgent(Agent):
                  fully_connected=[128],
                  activation_fn=tf.nn.relu,
                  optimizer=tf.train.AdamOptimizer(2.5e-4, epsilon=0.01/32),
-                 save_path="rl_models", model_name="GaussDQN"):
+                 save_path="rl_models", model_name="GaussDQN", loss='wasserstein'):
 
         super(GaussDQNAgent, self).__init__(env, num_actions,
                                           state_shape=state_shape,
@@ -486,11 +490,11 @@ class GaussDQNAgent(Agent):
         tf.reset_default_graph()
         self.agent_net = GaussianDeepQNetwork(self.num_actions, state_shape=state_shape,
                                               convs=convs, fully_connected=fully_connected,
-                                              activation_fn=tf.nn.relu,
+                                              activation_fn=tf.nn.relu, loss=loss,
                                               optimizer=optimizer, scope="agent")
         self.target_net = GaussianDeepQNetwork(self.num_actions, state_shape=state_shape,
                                                convs=convs, fully_connected=fully_connected,
-                                               activation_fn=tf.nn.relu,
+                                               activation_fn=tf.nn.relu, loss=loss,
                                                optimizer=optimizer, scope="target")
         self.init_weights()
 
@@ -503,12 +507,185 @@ class GaussDQNAgent(Agent):
         sigma = sigma_[np.arange(self.batch_size), max_actions]
 
         mu_targets = batch.r + (self.gamma * mu * batch.end)
-        sigma_targets = (self.gamma * sigma * batch.end)
+        sigma_targets = (self.gamma * sigma)
 
         # update agent network
         self.agent_net.update(sess, batch.s, batch.a, mu_targets, sigma_targets)
 
+    def play_with_gaussians(self,
+                          gpu_id=0,
+                          max_episode_length=2000,
+                          from_epoch=0):
 
+            config = self.gpu_config(gpu_id)
+            fig, ax = plt.subplots(1, 4, figsize=(12, 4))
+            x = np.linspace(-1, 70, 1000)
+
+
+            xdata = []
+            ydata = []
+            lines = []
+            
+            actions_dict = {0:'left', 1:'forward', 2:'right'}
+            
+            sz = self.train_env.get_state().shape[:2]
+            imdata = np.zeros(sz)
+            im = ax[0].imshow(imdata, vmin=0, vmax=5, interpolation='nearest')
+            for j in range(1, 4):
+                ax[j].set_xlim(-4, 60)
+                ax[j].set_ylim(0, 1)
+                ax[j].set_title(actions_dict[j - 1])
+                line, = ax[j].plot(xdata, ydata)
+                lines.append(line)
+
+            with tf.Session(config=config) as sess:
+                self.saver.restore(sess, self.path+"/model-"+str(from_epoch))
+                s = self.train_env.reset()
+                R = 0
+                for time_step in range(max_episode_length):
+                    a = self.agent_net.get_q_argmax(sess, [s])[0]
+                    mu, sigma = self.agent_net.get_mu_sigma(sess, [s])
+
+                    print(mu)
+                    print(sigma)
+
+                   
+                    mu = mu[0]
+                    sigma = sigma[0]
+
+
+                    def gauss(mu, sigma, x):
+                        return 1.0 / (np.sqrt(2 * np.pi) * sigma) * np.exp(-((x - mu) ** 2) / (2 * sigma**2))
+
+
+                    s, r, done = self.train_env.step(a)
+                    R += r
+                    im.set_data(self.train_env.get_image())
+                    for j in range(3):
+                        lines[j].set_xdata(x)
+                        lines[j].set_ydata(gauss(mu[j], sigma[j], x))
+                        lines[j].set_color('blue')
+                    
+                    
+                    lines[a].set_color('red')
+                    
+
+                    #plt.draw()
+                    #self.train_env.plot_state()
+
+                    display.clear_output(wait=True)
+                    display.display(plt.gcf())
+                    #time.sleep(0.1)
+
+                    if done: break
+            return R
+        
+class GaussLogDQNAgent(Agent):
+
+    def __init__(self, env, num_actions, state_shape=[8, 8, 5],
+                 convs=[[16, 2, 1], [32, 1, 1]],
+                 fully_connected=[128],
+                 activation_fn=tf.nn.relu,
+                 optimizer=tf.train.AdamOptimizer(2.5e-4, epsilon=0.01/32),
+                 save_path="rl_models", model_name="GaussDQN", loss='wasserstein'):
+
+        super(GaussLogDQNAgent, self).__init__(env, num_actions,
+                                          state_shape=state_shape,
+                                          save_path=save_path,
+                                          model_name=model_name)
+
+        tf.reset_default_graph()
+        self.agent_net = GaussianLogDeepQNetwork(self.num_actions, state_shape=state_shape,
+                                              convs=convs, fully_connected=fully_connected,
+                                              activation_fn=tf.nn.relu, loss=loss,
+                                              optimizer=optimizer, scope="agent")
+        self.target_net = GaussianLogDeepQNetwork(self.num_actions, state_shape=state_shape,
+                                               convs=convs, fully_connected=fully_connected,
+                                               activation_fn=tf.nn.relu, loss=loss,
+                                               optimizer=optimizer, scope="target")
+        self.init_weights()
+
+    def update_agent_weights(self, sess, batch):
+
+        # estimate the right hand side of Bellman equation
+        max_actions = self.target_net.get_q_argmax(sess, batch.s_)
+        mu_, sigma_ = self.target_net.get_mu_sigma(sess, batch.s_)
+        mu = mu_[np.arange(self.batch_size), max_actions]
+        sigma = sigma_[np.arange(self.batch_size), max_actions]
+
+        mu_targets = batch.r + (self.gamma * mu * batch.end)
+        sigma_targets = np.log(self.gamma) + sigma
+
+        # update agent network
+        self.agent_net.update(sess, batch.s, batch.a, mu_targets, sigma_targets)
+
+    def play_with_gaussians(self,
+                          gpu_id=0,
+                          max_episode_length=2000,
+                          from_epoch=0):
+
+            config = self.gpu_config(gpu_id)
+            fig, ax = plt.subplots(1, 4, figsize=(12, 4))
+            x = np.linspace(-1, 70, 1000)
+
+
+            xdata = []
+            ydata = []
+            lines = []
+            
+            actions_dict = {0:'left', 1:'forward', 2:'right'}
+            
+            sz = self.train_env.get_state().shape[:2]
+            imdata = np.zeros(sz)
+            im = ax[0].imshow(imdata, vmin=0, vmax=5, interpolation='nearest')
+            for j in range(1, 4):
+                ax[j].set_xlim(-4, 60)
+                ax[j].set_ylim(0, 1)
+                ax[j].set_title(actions_dict[j - 1])
+                line, = ax[j].plot(xdata, ydata)
+                lines.append(line)
+
+            with tf.Session(config=config) as sess:
+                self.saver.restore(sess, self.path+"/model-"+str(from_epoch))
+                s = self.train_env.reset()
+                R = 0
+                for time_step in range(max_episode_length):
+                    a = self.agent_net.get_q_argmax(sess, [s])[0]
+                    mu, sigma = self.agent_net.get_mu_sigma(sess, [s])
+
+                    print(mu)
+                    print(sigma)
+
+                   
+                    mu = mu[0]
+                    sigma = sigma[0]
+
+
+                    def gauss(mu, sigma, x):
+                        return 1.0 / (np.sqrt(2 * np.pi) * sigma) * np.exp(-((x - mu) ** 2) / (2 * sigma**2))
+
+
+                    s, r, done = self.train_env.step(a)
+                    R += r
+                    im.set_data(self.train_env.get_image())
+                    for j in range(3):
+                        lines[j].set_xdata(x)
+                        lines[j].set_ydata(gauss(mu[j], sigma[j], x))
+                        lines[j].set_color('blue')
+                    
+                    
+                    lines[a].set_color('red')
+                    
+
+                    #plt.draw()
+                    #self.train_env.plot_state()
+
+                    display.clear_output(wait=True)
+                    display.display(plt.gcf())
+                    #time.sleep(0.1)
+
+                    if done: break
+            return R        
 ########################## Gaussian Mixture Q-Network agent #########################
 
 class GMMDQNAgent(Agent):
@@ -517,7 +694,7 @@ class GMMDQNAgent(Agent):
                  convs=[[16, 2, 1], [32, 1, 1]],
                  fully_connected=[128],
                  activation_fn=tf.nn.relu,
-                 mixture_size=2,
+                 mixture_size=2, metric="silly", 
                  optimizer=tf.train.AdamOptimizer(2.5e-4, epsilon=0.01/32),
                  save_path="rl_models", model_name="GaussDQN"):
 
@@ -531,10 +708,12 @@ class GMMDQNAgent(Agent):
                                          convs=convs, fully_connected=fully_connected,
                                          activation_fn=tf.nn.relu,
                                          mixture_size=mixture_size,
+                                         metric=metric,
                                          optimizer=optimizer, scope="agent")
         self.target_net = GMMDeepQNetwork(self.num_actions, state_shape=state_shape,
                                           convs=convs, fully_connected=fully_connected,
                                           mixture_size=mixture_size,
+                                          metric=metric,
                                           activation_fn=tf.nn.relu,
                                           optimizer=optimizer, scope="target")
         self.init_weights()
@@ -549,10 +728,79 @@ class GMMDQNAgent(Agent):
         pi = pi_[np.arange(self.batch_size), max_actions]
 
         mu_targets = batch.r[:, None] + (self.gamma * mu * batch.end[:, None])
-        sigma_targets = (self.gamma * sigma)
+        sigma_targets = (np.sqrt(self.gamma) * sigma)
         pi_targets = pi * 1.0
         # update agent network
         self.agent_net.update(sess, batch.s, batch.a, pi_targets, mu_targets, sigma_targets)
+
+    def play_with_gmm(self,
+                      gpu_id=0,
+                      max_episode_length=2000,
+                      from_epoch=0):
+
+        config = self.gpu_config(gpu_id)
+        fig, ax = plt.subplots(1, 4, figsize=(12, 4))
+        x = np.linspace(-1, 70, 5000)
+        
+        
+        xdata = []
+        ydata = []
+        lines = []
+        sz = self.train_env.get_state().shape[:2]
+        imdata = np.zeros(sz)
+        im = ax[0].imshow(imdata, vmin=0, vmax=5, interpolation='nearest')
+        for j in range(1, 4):
+            ax[j].set_xlim(-1, 60)
+            ax[j].set_ylim(0, 60)
+            line, = ax[j].plot(xdata, ydata)
+            lines.append(line)
+        
+        with tf.Session(config=config) as sess:
+            self.saver.restore(sess, self.path+"/model-"+str(from_epoch))
+            s = self.train_env.reset()
+            R = 0
+            for time_step in range(max_episode_length):
+                a = self.agent_net.get_q_argmax(sess, [s])[0]
+                pi, mu, sigma = self.agent_net.get_pi_mu_sigma(sess, [s])
+                
+                
+                print(pi)
+                print(mu)
+                print(sigma)
+                
+                pi = pi[0]
+                mu = mu[0]
+                sigma = sigma[0]
+                
+                
+                def gmm(pi, mu, sigma, x):
+                    res = np.zeros_like(x)
+                    for i in range(pi.shape[0]):
+                        res += pi[i] * 1.0 / (np.sqrt(2 * np.pi) * sigma[i]) * np.exp(-(x - mu[i]) ** 2 / (2 * sigma[i] ** 2))
+    
+                    return res
+                
+                
+        
+                #gmm_vals = gmm(pi, mu, sigma, x)
+            
+                s, r, done = self.train_env.step(a)
+                R += r
+                im.set_data(self.train_env.get_image())
+                for j in range(3):
+                    lines[j].set_xdata(x)
+                    lines[j].set_ydata(gmm(pi[j, :], mu[j, :], sigma[j, :], x))
+                    
+                #plt.draw()
+                #self.train_env.plot_state()
+                
+                display.clear_output(wait=True)
+                display.display(plt.gcf())
+                
+                if done: break
+        return R        
+        
+        
 
 ############################# Soft Actor-Critic agent ############################
 

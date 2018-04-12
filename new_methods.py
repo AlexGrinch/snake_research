@@ -404,7 +404,7 @@ class GaussianDeepQNetwork:
                  fully_connected=[128],
                  optimizer=tf.train.AdamOptimizer(2.5e-4),
                  activation_fn=tf.nn.relu,
-                 scope="gaussian_boi", reuse=False):
+                 scope="gaussian_boi", loss='wasserstein', reuse=False):
 
         ###################### Neural network architecture ######################
 
@@ -417,7 +417,7 @@ class GaussianDeepQNetwork:
             out = fc_module(out, fully_connected, activation_fn)
             out = fc_module(out, [num_actions * 2], None)
             self.mu, sigma = tf.split(out, num_or_size_splits=2, axis=1)
-            self.sigma = 0.1 + tf.nn.sigmoid(sigma)
+            self.sigma = 0.05 + 3 * tf.nn.sigmoid(sigma)
 
             ######################### Optimization procedure ########################
 
@@ -432,19 +432,46 @@ class GaussianDeepQNetwork:
 
             # create loss function and update rule
             self.mu_targets = tf.placeholder(dtype=tf.float32, shape=[None])
-            #mu_loss = tf.losses.huber_loss(self.mu_targets, mu_selected)
+            
 
             self.sigma_targets = tf.placeholder(dtype=tf.float32, shape=[None])
-            #sigma_loss = tf.losses.huber_loss(self.sigma_targets, sigma_selected)
+            
 
-            #loss_term1 = tf.log(tf.div(sigma_selected, (self.sigma_targets + 1e-6)))
-            loss_term1 = tf.subtract(tf.log(sigma_selected), tf.log(self.sigma_targets))
-            mu_diff = tf.square(tf.subtract(self.mu_targets, mu_selected))
-            nom = tf.square(self.sigma_targets) + mu_diff
-            denom = 2*tf.square(sigma_selected) + 1e-9
-            loss_term2 = tf.div(nom, denom)
-            self.loss = tf.reduce_sum(loss_term1 + loss_term2)
-
+#             #loss_term1 = tf.log(tf.div(sigma_selected, (self.sigma_targets + 1e-6)))
+#             loss_term1 = tf.subtract(tf.log(sigma_selected), tf.log(self.sigma_targets))
+#             mu_diff = tf.square(tf.subtract(self.mu_targets, mu_selected))
+#             nom = tf.square(self.sigma_targets) + mu_diff
+#             denom = 2*tf.square(sigma_selected) + 1e-9
+#             loss_term2 = tf.div(nom, denom)
+            #self.loss = tf.reduce_sum(loss_term1 + loss_term2)
+            
+            if loss == 'wasserstein':
+                mu_loss = tf.losses.mean_squared_error(self.mu_targets, mu_selected)
+                sigma_loss = tf.losses.mean_squared_error(self.sigma_targets, sigma_selected)
+                self.loss = mu_loss + sigma_loss
+            
+            if loss == 'kl':
+                loss_term1 = tf.subtract(tf.log(sigma_selected), tf.log(self.sigma_targets))
+                mu_diff = tf.square(tf.subtract(self.mu_targets, mu_selected))
+                nom = tf.square(self.sigma_targets) + mu_diff
+                denom = 2*tf.square(sigma_selected) + 1e-6
+                loss_term2 = tf.div(nom, denom)  
+                
+                self.loss = tf.reduce_sum(loss_term1 + loss_term2)
+                
+            if loss == 'symmetric_kl':
+                term1 = tf.square(sigma_selected) + tf.square(tf.subtract(self.mu_targets, mu_selected))
+                term1 = tf.div(term1, 2 * tf.square(self.sigma_targets) + 1e-6)
+                
+                term2 = tf.square(self.sigma_targets) + tf.square(tf.subtract(self.mu_targets, mu_selected))
+                
+                term2 = tf.div(term2, 2 * tf.square(sigma_selected) + 1e-6)
+                
+                self.loss = tf.reduce_sum(term1 + term2)
+                
+                
+                
+            
             #self.loss = tf.reduce_sum(mu_loss + sigma_loss)
             self.update_model = optimizer.minimize(self.loss)
 
@@ -471,16 +498,16 @@ class GaussianDeepQNetwork:
                      self.sigma_targets:sigma_targets}
         sess.run(self.update_model, feed_dict)
 
-
-class GMMDeepQNetwork:
+        
+        
+class GaussianLogDeepQNetwork:
 
     def __init__(self, num_actions, state_shape=[8, 8, 5],
                  convs=[[32, 4, 2], [64, 2, 1]],
                  fully_connected=[128],
                  optimizer=tf.train.AdamOptimizer(2.5e-4),
                  activation_fn=tf.nn.relu,
-                 mixture_size=2,
-                 scope="gmm_boi", reuse=False):
+                 scope="gaussian_log_boi", loss='wasserstein', reuse=False):
 
         ###################### Neural network architecture ######################
 
@@ -491,16 +518,126 @@ class GMMDeepQNetwork:
             out = conv_module(self.input_states, convs, activation_fn)
             out = layers.flatten(out)
             out = fc_module(out, fully_connected, activation_fn)
+            out = fc_module(out, [num_actions * 2], None)
+            self.mu, sigma = tf.split(out, num_or_size_splits=2, axis=1)
+            self.sigma = sigma
+
+            ######################### Optimization procedure ########################
+
+            # one-hot encode actions to get q-values for state-action pairs
+            self.input_actions = tf.placeholder(dtype=tf.int32, shape=[None])
+            actions_onehot = tf.one_hot(self.input_actions, num_actions, dtype=tf.float32)
+            mu_selected = tf.reduce_sum(tf.multiply(self.mu, actions_onehot), axis=1)
+            sigma_selected = tf.reduce_sum(tf.multiply(self.sigma, actions_onehot), axis=1)
+
+            # choose best actions (according to q-values)
+            self.q_argmax = tf.argmax(self.mu, axis=1)
+
+            # create loss function and update rule
+            self.mu_targets = tf.placeholder(dtype=tf.float32, shape=[None])
+            
+
+            self.sigma_targets = tf.placeholder(dtype=tf.float32, shape=[None])
+            
+
+#             #loss_term1 = tf.log(tf.div(sigma_selected, (self.sigma_targets + 1e-6)))
+#             loss_term1 = tf.subtract(tf.log(sigma_selected), tf.log(self.sigma_targets))
+#             mu_diff = tf.square(tf.subtract(self.mu_targets, mu_selected))
+#             nom = tf.square(self.sigma_targets) + mu_diff
+#             denom = 2*tf.square(sigma_selected) + 1e-9
+#             loss_term2 = tf.div(nom, denom)
+            #self.loss = tf.reduce_sum(loss_term1 + loss_term2)
+            
+            if loss == 'wasserstein':
+                mu_loss = tf.losses.mean_squared_error(self.mu_targets, mu_selected)
+                sigma_loss = tf.losses.mean_squared_error(tf.exp(self.sigma_targets), tf.exp(sigma_selected))
+                self.loss = mu_loss + sigma_loss
+            
+            if loss == 'kl':
+                loss_term1 = tf.subtract(sigma_selected, self.sigma_targets)
+                mu_diff = tf.square(tf.subtract(self.mu_targets, mu_selected))
+                nom = tf.square(tf.exp(self.sigma_targets)) + mu_diff
+                denom = 2*tf.square(tf.exp(sigma_selected)) + 1e-6
+                loss_term2 = tf.div(nom, denom)  
+                
+                self.loss = tf.reduce_sum(loss_term1 + loss_term2)
+                
+            if loss == 'symmetric_kl':
+                term1 = tf.square(tf.exp(sigma_selected)) + tf.square(tf.subtract(self.mu_targets, mu_selected))
+                term1 = tf.div(term1, 2 * tf.square(tf.exp(self.sigma_targets)) + 1e-6)
+                
+                term2 = tf.square(tf.exp(self.sigma_targets)) + tf.square(tf.subtract(self.mu_targets, mu_selected))
+                
+                term2 = tf.div(term2, 2 * tf.square(tf.exp(sigma_selected)) + 1e-6)
+                
+                self.loss = tf.reduce_sum(term1 + term2)
+                
+                
+                
+            
+            #self.loss = tf.reduce_sum(mu_loss + sigma_loss)
+            self.update_model = optimizer.minimize(self.loss)
+
+    def get_q_argmax(self, sess, states):
+        feed_dict = {self.input_states:states}
+        q_argmax = sess.run(self.q_argmax, feed_dict)
+        return q_argmax
+
+    def get_q_values(self, sess, states):
+        feed_dict = {self.input_states:states}
+        q_values = sess.run(self.mu, feed_dict)
+        return q_values
+
+    def get_mu_sigma(self, sess, states):
+        feed_dict = {self.input_states:states}
+        mu, sigma = sess.run([self.mu, self.sigma], feed_dict)
+        return mu, sigma
+
+    def update(self, sess, states, actions, mu_targets, sigma_targets):
+
+        feed_dict = {self.input_states:states,
+                     self.input_actions:actions,
+                     self.mu_targets:mu_targets,
+                     self.sigma_targets:sigma_targets}
+        sess.run(self.update_model, feed_dict)
+
+class GMMDeepQNetwork:
+
+    def __init__(self, num_actions, state_shape=[8, 8, 5],
+                 convs=[[32, 4, 2], [64, 2, 1]],
+                 fully_connected=[128],
+                 optimizer=tf.train.AdamOptimizer(2.5e-4),
+                 activation_fn=tf.nn.relu,
+                 mixture_size=2,
+                 metric="silly",
+                 min_reward=None,
+                 max_reward=None,
+                 scope="gmm_boi", reuse=False):
+
+        ###################### Neural network architecture ######################
+
+        input_shape = [None] + state_shape
+        self.input_states = tf.placeholder(dtype=tf.float32, shape=input_shape)
+
+        if min_reward is None:
+            self.min_reward = -1.0
+        
+        if max_reward is None:
+            self.max_reward = np.prod(state_shape[:2]) - 3.0
+        with tf.variable_scope(scope, reuse=reuse):
+            out = conv_module(self.input_states, convs, activation_fn)
+            out = layers.flatten(out)
+            out = fc_module(out, fully_connected, activation_fn)
             out = fc_module(out, [num_actions * mixture_size * 3], None)
             out = tf.reshape(out, (-1, num_actions, mixture_size, 3))
 
             mu, sigma, pi = tf.unstack(out, axis=-1)
             self.mu = mu
-            self.sigma = tf.abs(sigma)
+            self.sigma = 10 * tf.sigmoid(sigma)
             self.pi = tf.nn.softmax(pi, axis=2)
 
             self.q_values = tf.reduce_sum(tf.multiply(self.pi, self.mu), axis=2)
-
+            
 
             ######################### Optimization procedure ########################
 
@@ -544,8 +681,55 @@ class GMMDeepQNetwork:
 
             #self.loss = kl_mixtures(pi_selected, mu_selected, sigma_selected,
             #                        self.pi_targets, self.mu_targets, self.sigma_targets)
-
-            self.loss = tf.reduce_mean((mu_selected - self.mu_targets) ** 2) + tf.reduce_mean((sigma_selected - self.sigma_targets) ** 2) + tf.reduce_mean((pi_selected - self.pi_targets) ** 2)
+            
+            
+            def gauss_gramm(m1, s1, m2, s2):
+                m1 = m1[:, :, None]
+                s1 = s1[:, :, None]   
+                m2 = m2[:, None, :]
+                s2 = s2[:, None, :]  
+                
+                m = (m1 - m2)**2
+    
+                s = s1 ** 2 + s2 ** 2
+    
+                num = tf.exp(-m / (2 * s)) * np.sqrt(np.pi / 2)
+    
+                denom = np.pi * s1 * s2 * tf.sqrt(1.0 / s1 ** 2 + 1.0 / s2 ** 2)   
+                return num / denom
+        
+        
+            if metric == "silly":
+                self.loss = tf.reduce_mean((mu_selected - self.mu_targets) ** 2) + tf.reduce_mean((sigma_selected - self.sigma_targets) ** 2) + tf.reduce_mean((pi_selected - self.pi_targets) ** 2)
+                
+            elif metric == "l2":
+                
+                gr1 = gauss_gramm(mu_selected, sigma_selected, mu_selected, sigma_selected)
+                
+                gr2 = gauss_gramm(mu_selected, sigma_selected, self.mu_targets, self.sigma_targets)
+                
+                gr3 = gauss_gramm(self.mu_targets, self.sigma_targets, self.mu_targets, self.sigma_targets)
+                
+                t1 = tf.einsum('nab,na,nb->n',gr1, pi_selected, pi_selected)
+                
+                t2 = tf.einsum('nab,na,nb->n',gr2, pi_selected, self.pi_targets)
+                
+                t3 = tf.einsum('nab,na,nb->n',gr3, self.pi_targets, self.pi_targets)
+                
+                self.loss = tf.reduce_mean(t1 - 2 * t2 + t3)
+            
+            elif metric == 'wasserstein':
+                z = tf.linspace(self.min_reward, self.max_reward, 200)
+                h = z[1] - z[0]
+                
+                def get_cdf(pi, mu, sigma, x):
+                    tmp = pi[:, None, :] * 0.5 * (1 + tf.erf((x[None, :, None] - mu[:, None, :]) / (np.sqrt(2) * sigma[:, None, :])))
+                    return tf.reduce_sum(tmp, axis=-1)
+                
+                cdf1 = get_cdf(pi_selected, mu_selected, sigma_selected, z)
+                cdf2 = get_cdf(self.pi_targets, self.mu_targets, self.sigma_targets, z)
+                self.loss = tf.reduce_sum((cdf1 - cdf2) ** 2) * h
+                
             #self.loss = tf.reduce_sum(mu_loss + sigma_loss)
             self.update_model = optimizer.minimize(self.loss)
 
