@@ -3,3 +3,4 @@
 *.pyc
 __pycache__
 /snake_models/*
+/atari_models/*
